@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pto-isa.org/schemas/asl-model/architecture-state-v1.json",
+  "title": "ASL model architectural state envelope",
+  "description": "Versioned passive architectural-state serialization data; not live runner storage or lifecycle state.",
+  "$ref": "#/$defs/stateEnvelope",
+  "$defs": {
+    "json": {},
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "descriptor": {
+      "type": "object",
+      "required": ["dtype", "layout", "shape", "valid_shape", "strides", "extensions"],
+      "properties": {
+        "dtype": { "type": "string" },
+        "layout": { "type": "string" },
+        "shape": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "valid_shape": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "strides": { "type": "array", "items": { "type": "integer" } },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "scalar": {
+      "type": "object",
+      "required": ["registers", "pc", "tpc", "flags", "mode", "extensions"],
+      "properties": {
+        "registers": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "pc": { "type": "integer" },
+        "tpc": { "type": "integer" },
+        "flags": { "type": "object", "additionalProperties": { "type": ["integer", "boolean"] } },
+        "mode": { "type": "string" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "block": {
+      "type": "object",
+      "required": ["active", "block_id", "start_pc", "instruction_count", "attributes", "extensions"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "block_id": { "type": ["integer", "null"] },
+        "start_pc": { "type": ["integer", "null"] },
+        "instruction_count": { "type": "integer", "minimum": 0 },
+        "attributes": { "type": "object", "additionalProperties": true },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "tileValue": {
+      "type": "object",
+      "required": ["descriptor", "data", "defined", "generation", "extensions"],
+      "properties": {
+        "descriptor": { "$ref": "#/$defs/descriptor" },
+        "data": { "type": "array" },
+        "defined": { "type": "array", "items": { "type": "boolean" } },
+        "generation": { "type": "integer", "minimum": 0 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "tile": {
+      "type": "object",
+      "required": ["registers", "extensions"],
+      "properties": {
+        "registers": { "type": "object", "additionalProperties": { "$ref": "#/$defs/tileValue" } },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "sharedTile": {
+      "type": "object",
+      "required": ["descriptor", "data", "defined", "generation", "allocation_mask", "extensions"],
+      "properties": {
+        "descriptor": { "$ref": "#/$defs/descriptor" },
+        "data": { "type": "array" },
+        "defined": { "type": "array", "items": { "type": "boolean" } },
+        "generation": { "type": "integer", "minimum": 0 },
+        "allocation_mask": { "type": "integer", "minimum": 0 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "shared": {
+      "type": "object",
+      "required": ["tiles", "generations", "extensions"],
+      "properties": {
+        "tiles": { "type": "object", "additionalProperties": { "$ref": "#/$defs/sharedTile" } },
+        "generations": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "region": {
+      "type": "object",
+      "required": ["base", "size", "permissions", "name", "extensions"],
+      "properties": {
+        "base": { "type": "integer", "minimum": 0 },
+        "size": { "type": "integer", "minimum": 1 },
+        "permissions": { "enum": ["r", "w", "x", "rw", "rx", "wx", "rwx"] },
+        "name": { "type": "string" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "memory": {
+      "type": "object",
+      "required": ["cells", "regions", "extensions"],
+      "properties": {
+        "cells": {
+          "type": "object",
+          "propertyNames": { "pattern": "^0x(?:0|[1-9a-f][0-9a-f]*)$" },
+          "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 255 }
+        },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "fault": {
+      "type": "object",
+      "required": ["pending", "kind", "code", "address", "instruction", "message", "recoverable", "extensions"],
+      "properties": {
+        "pending": { "type": "boolean" },
+        "kind": { "type": "string" },
+        "code": { "type": "string" },
+        "address": { "type": ["integer", "null"] },
+        "instruction": { "type": "string" },
+        "message": { "type": "string" },
+        "recoverable": { "type": "boolean" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "required": ["scalar", "block", "tile", "shared", "memory", "fault", "pe_id", "thread_id", "cycle", "extensions"],
+      "properties": {
+        "scalar": { "$ref": "#/$defs/scalar" },
+        "block": { "$ref": "#/$defs/block" },
+        "tile": { "$ref": "#/$defs/tile" },
+        "shared": { "$ref": "#/$defs/shared" },
+        "memory": { "$ref": "#/$defs/memory" },
+        "fault": { "$ref": "#/$defs/fault" },
+        "pe_id": { "type": "integer", "minimum": 0 },
+        "thread_id": { "type": "integer", "minimum": 0 },
+        "cycle": { "type": "integer", "minimum": 0 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "stateEnvelope": {
+      "type": "object",
+      "required": ["schema", "kind", "state", "artifact", "metadata"],
+      "properties": {
+        "schema": { "const": "pto.asl-model.arch-state.v1" },
+        "kind": { "enum": ["initial_state", "state_snapshot"] },
+        "state": { "$ref": "#/$defs/state" },
+        "artifact": { "type": "object", "additionalProperties": true },
+        "metadata": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    }
+  }
+}

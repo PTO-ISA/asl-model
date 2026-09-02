@@ -10,5 +10,5 @@ test:
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 
 check: test
-	$(PYTHON) -m py_compile src/pto_asl_model/*.py scripts/pto-asl-run
+	PYTHONPATH=src $(PYTHON) -m compileall -q src scripts tools
 	git diff --check

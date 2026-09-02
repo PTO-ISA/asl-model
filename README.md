@@ -6,16 +6,26 @@ consumer boundary for functional runners such as SuperScalarModel `gfrun`.
 
 PTO architectural semantics remain owned by
 [`PTO-ISA/pto-spec`](https://github.com/PTO-ISA/pto-spec). This repository owns
-model lifecycle, hosted execution, transport, ABI, ELF loading, and validation.
+hosted execution, ABI, ELF loading, and validation.
 
 Development changes land through pull requests. The initial ASLRef backend is
 tracked by the repository issue list.
 
 ## Reference runner
 
-The first closure runs consecutive PTO instructions inside one ASLRef process.
-It accepts a checked static ELF whose load segments fit the explicit hosted
-memory bound, plus an assembled PTO ASL file:
+The hosted ELF command is the one model entry used by both the command line
+tool and the C ABI. It runs consecutive instructions in one ASLRef process;
+ASL owns fetch, instruction length selection, decode, legality, faults, and
+architectural state transitions. The model owns ELF validation/loading, the
+guest-memory image, stop/result handling, and the process boundary.
+
+The Python package also exposes strict, passive architectural-state DTOs and
+canonical serialization helpers. They do not map memory, authorize accesses,
+load images, initialize stacks, reset or restore execution, or provide another
+instruction engine. The hosted runner and PTO ASL remain the sole live memory
+and execution authority.
+
+The hosted runner accepts a checked static ELF and an assembled PTO ASL file.
 
 ```bash
 scripts/pto-asl-run \
@@ -78,3 +88,7 @@ promotion gates.
 The reset contract is in [`docs/model-ndf-v1.md`](docs/model-ndf-v1.md). The
 snapshot lifecycle, identity, transport, and promotion gates are in
 [`docs/worker-snapshot-design.md`](docs/worker-snapshot-design.md).
+
+Run repository checks with `make check`. The C/C++ consumer links
+`PTOASLModel::pto_asl_model` and calls the versioned
+`pto_model_run_elf` function declared in `include/pto/pto_asl_model.h`.
