@@ -1,0 +1,14 @@
+{
+  "schema": "pto-avs-case-v1", "case_id": "cube_internal_acc_hints", "lane": "asm",
+  "source": "source.S", "linker_script": "case.ld",
+  "pto_ids": ["PTO-CUBE-INTERNAL-ACCUMULATOR-001"],
+  "obligation_ids": ["ASLMODEL-VERIF-INTERNAL-ACC-HINTS-001"], "features": ["tile"],
+  "avs_ids": ["PTO-AVS-TILE-INTERNAL-ACCUMULATOR-HINTS-002"],
+  "expected_length_sequence": [32, 32, 32, 32, 32, 16, 16, 32, 32, 16, 32, 32, 16, 16, 32, 32, 16, 32, 32, 16, 16, 32, 32, 16, 32, 32, 32, 16, 16, 16, 32, 32, 32, 16, 32, 32, 16, 16, 32, 32, 16, 32, 32, 32, 16, 16, 16, 32, 32, 32, 16, 32, 32, 32, 16, 16, 32, 32, 16],
+  "compile": {"tool": "clang", "arguments": ["-target", "{target}", "-c", "{source}", "-o", "{object}"]},
+  "link": {"tool": "ld_lld", "arguments": ["-o", "{elf}", "-T", "{linker_script}", "{object}"]},
+  "execution": {"start_acr": 0, "start_symbol": "_start", "return_symbol": "cross_model_stop", "stop_symbol": "cross_model_stop", "result_symbol": "cross_model_result", "result_size_symbol": "cross_model_result_size", "stop_after_hits": 1, "max_steps": 59, "stack_top": 3840, "host_request": null},
+  "model": {"memory_bytes": 65536, "tile_elements": 32768, "runtime_typecheck": "minimal", "backend": "host-sparse"},
+  "golden": {"policy": "exact", "encoding": "hex", "path": "golden.hex", "sha256": "0f334e657f88982dc663e526403fbfd6fbf30ab80b76f7a2e21b5f944f6981ac", "provenance": {"source": "ASL-MODEL independently calculated FP32 canary", "rationale": "For A=2.0, B=3.0, and explicit C=5.0, both CCTRL 00 and 11 must publish 2*3+5=11.0 (little-endian 0x41300000); dropping explicit C or multiplication changes the bytes.", "model_generated": false}},
+  "profile": "pto-functional-reference-v1", "resource_class": "small", "timeout_seconds": 900
+}

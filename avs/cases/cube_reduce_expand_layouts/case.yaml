@@ -1,0 +1,14 @@
+{
+  "schema": "pto-avs-case-v1", "case_id": "cube_reduce_expand_layouts", "lane": "asm",
+  "source": "source.S", "linker_script": "case.ld",
+  "pto_ids": ["PTO-TEXPANDS-CONTRACT-001", "PTO-TROWEXPANDADD-CONTRACT-001", "PTO-TROWSUM-CONTRACT-001"],
+  "obligation_ids": ["ASLMODEL-VERIF-CUBE-REDUCE-EXPAND-001"], "features": ["tile"],
+  "avs_ids": ["PTO-AVS-TILE-EXPANSION-CUBE-001", "PTO-AVS-TILE-REDUCTION-CUBE-001", "PTO-AVS-TILE-TEXPANDS-CUBE-LAYOUT-002"],
+  "expected_length_sequence": [32, 32, 32, 32, 32, 32, 32, 16, 16, 32, 32, 16, 32, 32, 16, 16, 32, 16, 32, 32, 16, 16, 32, 32, 16, 32, 32, 16, 16, 32, 16, 32, 32, 16, 16, 32, 32, 16, 32, 32, 16, 16, 32, 32, 16, 32, 32, 16, 16, 32, 16, 32, 32, 16, 16, 32, 32, 16, 32, 32, 16, 16, 32, 16, 32, 32, 16, 16, 32, 32, 16],
+  "compile": {"tool": "clang", "arguments": ["-target", "{target}", "-c", "{source}", "-o", "{object}"]},
+  "link": {"tool": "ld_lld", "arguments": ["-o", "{elf}", "-T", "{linker_script}", "{object}"]},
+  "execution": {"start_acr": 0, "start_symbol": "_start", "return_symbol": "cross_model_stop", "stop_symbol": "cross_model_stop", "result_symbol": "cross_model_result", "result_size_symbol": "cross_model_result_size", "stop_after_hits": 1, "max_steps": 71, "stack_top": 3840, "host_request": null},
+  "model": {"memory_bytes": 65536, "tile_elements": 32768, "runtime_typecheck": "minimal", "backend": "host-sparse"},
+  "golden": {"policy": "exact", "encoding": "hex", "path": "golden.hex", "sha256": "a72b64dde42e976242ea49a224fbc027d0bfd20fc42e00abc35ee88b6898ea50", "provenance": {"source": "ASL-MODEL independently calculated U32 layout canary", "rationale": "M16 input [1,2] reduces to 3 and expands over fill 10 as [13,13]; distinct M32 input [5,9] reduces to 14 and expands over fill 20 as [34,34].", "model_generated": false}},
+  "profile": "pto-functional-reference-v1", "resource_class": "small", "timeout_seconds": 900
+}

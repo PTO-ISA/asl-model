@@ -277,13 +277,35 @@ class ClosureArtifactTests(unittest.TestCase):
         self.assertEqual(
             sorted(cases),
             [
-                "block_64_stop_pc", "host_exit_group", "scalar-c-return",
-                "scalar-ir-return", "scalar_stop_pc", "tile_tadd_stop_pc",
+                "block_64_stop_pc", "cube_internal_acc_hints",
+                "cube_reduce_expand_layouts", "host_exit_group",
+                "scalar-c-return", "scalar-ir-return", "scalar_stop_pc",
+                "tile_tadd_stop_pc",
             ],
         )
         selected, obligations = _select_cases(cases, ["PTO-INST-TILE-TADD"], [])
         self.assertEqual(selected, ["tile_tadd_stop_pc"])
         self.assertIn("ASLMODEL-VERIF-TILE-TADD-STOP-PC-001", obligations)
+        selected, obligations = _select_cases(
+            cases,
+            [
+                "PTO-CUBE-INTERNAL-ACCUMULATOR-001",
+                "PTO-TEXPANDS-CONTRACT-001",
+                "PTO-TROWEXPANDADD-CONTRACT-001",
+                "PTO-TROWSUM-CONTRACT-001",
+            ],
+            [],
+        )
+        self.assertEqual(
+            selected, ["cube_internal_acc_hints", "cube_reduce_expand_layouts"]
+        )
+        self.assertEqual(
+            obligations,
+            [
+                "ASLMODEL-VERIF-CUBE-REDUCE-EXPAND-001",
+                "ASLMODEL-VERIF-INTERNAL-ACC-HINTS-001",
+            ],
+        )
         with self.assertRaisesRegex(ValueError, "no AVS case"):
             _select_cases(cases, ["PTO-UNKNOWN"], [])
         with self.assertRaisesRegex(

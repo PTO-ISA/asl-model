@@ -126,7 +126,7 @@ def parse_pto_isa_note(path: pathlib.Path) -> PTOISANote:
     try:
         validate_identity({
             "release": value.get("release"),
-            "publication_version": "0.58.5.0",
+            "publication_version": "0.58.5.1",
             "encoding_abi": value.get("encoding_abi"),
             "encoding_projection_sha256": value.get("encoding_projection_sha256"),
         }, ".note.pto.isa")
