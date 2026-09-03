@@ -57,7 +57,7 @@ The repository owns the cross-component AVS layer for PTO 0.58.5. The
 clean PTO-SPEC/LLVM/ASL-MODEL candidate tuple, the PTO-owned NDF and ASLRef
 pins, and exact tool binaries before it compiles any case. Every input object
 and final ELF must contain exactly one canonical allocatable
-`.note.pto.isa` for release `0.58.5`, publication `0.58.5.0`, encoding ABI
+`.note.pto.isa` for release `0.58.5`, publication `0.58.5.1`, encoding ABI
 `pto-isa-0.58.5-mode-function-v1`, and the release encoding-projection hash.
 
 Closed-loop cases live under [`avs/cases`](avs/cases). They use JSON syntax in
@@ -71,7 +71,9 @@ from the 0.58.5 PTO-SPEC baseline: `scalar_stop_pc`, `block_64_stop_pc`,
 `tile_tadd_stop_pc`, and `host_exit_group`. Their exact instruction bytes,
 link addresses, independent results, PTO requirements, AVS IDs, and expected
 instruction-length sequences remain explicit here. C and IR scalar-return
-canaries separately exercise compiler-language lanes.
+canaries separately exercise compiler-language lanes. Publication 0.58.5.1
+adds `cube_reduce_expand_layouts` for direct M16/M32 reduction and expansion
+and `cube_internal_acc_hints` for transparent CCTRL cache hints.
 
 The command emits four distinct canonical artifacts:
 

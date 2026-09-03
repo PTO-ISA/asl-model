@@ -65,6 +65,33 @@ observe the independently specified U32 result.
 AVS case `tile_tadd_stop_pc` MUST satisfy the Tile load/add/store and terminal
 TPC obligation.
 
+## Direct CUBE reduction and expansion layouts {#ASLMODEL-REQ-CUBE-REDUCE-EXPAND-001}
+<!-- ndf: kind=requirement modality=must refinement=L1 domain=tile status=active conforms-to=ndf://pto-spec/PTO-TEXPANDS-CONTRACT-001,ndf://pto-spec/PTO-TROWEXPANDADD-CONTRACT-001,ndf://pto-spec/PTO-TROWSUM-CONTRACT-001 -->
+
+The closure MUST compile, link, and execute direct Local CUBE_M16 and CUBE_M32
+asymmetric one-row loads, row reductions, nonzero scalar fills, row
+expansion-adds, and stores, then compare their distinct results with
+independently calculated and committed golden bytes.
+
+## Direct CUBE layout verification {#ASLMODEL-VERIF-CUBE-REDUCE-EXPAND-001}
+<!-- ndf: kind=verification modality=must refinement=L3 domain=tile status=active verifies=ASLMODEL-REQ-CUBE-REDUCE-EXPAND-001 -->
+
+AVS case `cube_reduce_expand_layouts` MUST satisfy the direct M16/M32 reduction
+and expansion execution obligation.
+
+## Transparent InternalAcc hints {#ASLMODEL-REQ-INTERNAL-ACC-HINTS-001}
+<!-- ndf: kind=requirement modality=must refinement=L1 domain=tile status=active conforms-to=ndf://pto-spec/PTO-CUBE-INTERNAL-ACCUMULATOR-001 -->
+
+The closure MUST execute otherwise-identical nonzero explicit-C matrix
+accumulation with CCTRL `00` and `11` and MUST observe identical nonzero
+architectural results when no final-output post-processing is selected.
+
+## Transparent InternalAcc hint verification {#ASLMODEL-VERIF-INTERNAL-ACC-HINTS-001}
+<!-- ndf: kind=verification modality=must refinement=L3 domain=tile status=active verifies=ASLMODEL-REQ-INTERNAL-ACC-HINTS-001 -->
+
+AVS case `cube_internal_acc_hints` MUST satisfy the explicit-C input-prefetch
+and raw-output replacement-hint transparency obligation.
+
 ## Host exit request {#ASLMODEL-REQ-HOST-EXIT-GROUP-001}
 <!-- ndf: kind=requirement modality=must refinement=L1 domain=closure status=active conforms-to=ndf://pto-spec/PTO-REQ-INSTRUCTION-FETCH-001,ndf://pto-spec/PTO-REQ-SCALAR-BODY-ENTRY-001,ndf://pto-spec/PTO-INST-SCALAR-ACRC -->
 

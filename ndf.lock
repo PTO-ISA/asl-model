@@ -6,5 +6,5 @@ dependencies:
     path: tools/ndf
   pto-spec:
     uri: https://github.com/PTO-ISA/pto-spec.git
-    revision: 13d550f4f63c6321f94e5c6b09da4c3986081841
+    revision: a2727c90342b85fb9d7c45f4a00f7056e12dc730
     path: vendor/pto-spec
