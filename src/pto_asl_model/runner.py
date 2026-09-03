@@ -17,6 +17,14 @@ import tempfile
 import time
 from collections.abc import Sequence
 
+from .closure_artifacts import (
+    ENCODING_ABI,
+    ENCODING_PROJECTION_SHA256,
+    PUBLICATION_VERSION,
+    RELEASE,
+)
+from .elf_note import PTOISANote, parse_pto_isa_note
+
 
 ELF_HEADER = struct.Struct("<16sHHIQQQIHHHHHH")
 PROGRAM_HEADER = struct.Struct("<IIQQQQQQ")
@@ -82,6 +90,7 @@ class ElfImage:
     segments: tuple[LoadSegment, ...]
     symbols: tuple["ElfSymbol", ...]
     sha256: str
+    pto_isa_note: PTOISANote | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -106,6 +115,7 @@ class RunConfiguration:
     runtime_typecheck: str = "strict"
     stop_after_hits: int = 1
     start_pc: int = 0
+    start_acr: int = 0
     return_pc: int = 0
     stack_top: int = 0
     manifest_output: pathlib.Path | None = None
@@ -113,6 +123,45 @@ class RunConfiguration:
     lock: pathlib.Path | None = None
     sidecar: pathlib.Path | None = None
     memory_backend: str = "host-sparse"
+    host_request_number: int | None = None
+    host_request_argument0: int | None = None
+    service_request_type: int | None = None
+    timeout_seconds: float | None = None
+    deadline_monotonic: float | None = None
+
+
+class ASLRefTimeoutError(RuntimeError):
+    """The ASLRef execution subprocess exceeded its caller-owned deadline."""
+
+
+def _run_aslref(command: list[str], timeout_seconds: float | None) -> subprocess.CompletedProcess[str]:
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise ValueError("ASLRef timeout_seconds must be positive")
+    try:
+        return subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ASLRefTimeoutError(
+            f"ASLRef execution timed out after {timeout_seconds:.3f} seconds"
+        ) from error
+
+
+def _execution_timeout(configuration: RunConfiguration) -> float | None:
+    timeout = configuration.timeout_seconds
+    if configuration.deadline_monotonic is not None:
+        remaining = configuration.deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            raise ASLRefTimeoutError(
+                "ASLRef execution deadline expired before process launch"
+            )
+        timeout = remaining if timeout is None else min(timeout, remaining)
+    return timeout
 
 
 def _checked_range(start: int, size: int, limit: int, label: str) -> tuple[int, int]:
@@ -122,7 +171,8 @@ def _checked_range(start: int, size: int, limit: int, label: str) -> tuple[int, 
 
 
 def parse_elf(path: pathlib.Path,
-              memory_bytes: int = REFERENCE_MEMORY_BYTES) -> ElfImage:
+              memory_bytes: int = REFERENCE_MEMORY_BYTES,
+              *, require_pto_identity: bool = False) -> ElfImage:
     if memory_bytes < 256 or memory_bytes > MAX_HOSTED_MEMORY_BYTES:
         raise ElfError("hosted memory bound is outside the supported model profile")
     content = path.read_bytes()
@@ -235,11 +285,13 @@ def parse_elf(path: pathlib.Path,
                 name = strings[name_offset:name_end].decode("utf-8", errors="strict")
                 if name:
                     symbols.append(ElfSymbol(name, value, size, symbol_section))
+    note = parse_pto_isa_note(path) if require_pto_identity else None
     return ElfImage(
         entry=entry,
         segments=tuple(sorted(segments, key=lambda segment: segment.address)),
         symbols=tuple(symbols),
         sha256=hashlib.sha256(content).hexdigest(),
+        pto_isa_note=note,
     )
 
 
@@ -254,6 +306,8 @@ def build_harness(image: ElfImage, configuration: RunConfiguration) -> str:
         raise ValueError("max_steps must be positive")
     if configuration.stop_after_hits <= 0:
         raise ValueError("stop_after_hits must be positive")
+    if configuration.start_acr < 0 or configuration.start_acr > 15:
+        raise ValueError("start_acr must be a four-bit access-control ring")
     _checked_range(
         configuration.result_address,
         configuration.result_size,
@@ -279,6 +333,7 @@ def build_harness(image: ElfImage, configuration: RunConfiguration) -> str:
         "func main() => integer",
         "begin",
         "    ResetProfileState();",
+        f"    SetCurrentACR({configuration.start_acr});",
         f"    WriteTPC({_word(start_pc)});",
         "    var model_stop_hits: integer = 0;",
         "    var previous_pc: bits(PTO_XLEN) = ReadTPC();",
@@ -317,6 +372,40 @@ def build_harness(image: ElfImage, configuration: RunConfiguration) -> str:
         f"    for model_step = 0 to {configuration.max_steps - 1} do",
         "        let step_pc = ReadTPC();",
         "        let status = ExecuteNextPTOInstruction();",
+    ])
+    if configuration.host_request_number is not None:
+        if (
+            configuration.host_request_argument0 is None
+            or configuration.service_request_type is None
+            or configuration.return_pc == 0
+        ):
+            raise ValueError("host request terminal policy is incomplete")
+        if configuration.service_request_type > 15:
+            raise ValueError("service request type is outside four bits")
+        lines.extend([
+            "        if status == PTOInstruction_Rejected &&",
+            "           _LastFault == Fault_ServiceRequest &&",
+            f"           UInt(_ControlRequestOperand[3:0]) == {configuration.service_request_type} &&",
+            "           _TrapContexts[[CurrentACR()]].tpc == "
+            f"{_word(configuration.return_pc)} &&",
+            f"           UInt(ReadPEGPR(0, 9)) == {configuration.host_request_number} &&",
+            f"           UInt(ReadPEGPR(0, 2)) == {configuration.host_request_argument0} then",
+        ])
+        if configuration.result_size:
+            lines.extend([
+                f"            for result_index = 0 to {configuration.result_size - 1} do",
+                '                println "PTO_RESULT_BYTE ", result_index, " ",',
+                "                    UInt(ReadPhysicalMemoryByte(",
+                f"                        {_word(configuration.result_address)} + NaturalToWord(result_index)));",
+                "            end;",
+            ])
+        lines.extend([
+            '            println "PTO_FINAL_TPC ",',
+            "                UInt(_TrapContexts[[CurrentACR()]].tpc);",
+            "            return 0;",
+            "        end;",
+        ])
+    lines.extend([
         "        if status == PTOInstruction_Rejected then",
         '            println "PTO_REJECTED_TPC ", UInt(step_pc);',
         '            println "PTO_PREVIOUS_TPC ", UInt(previous_pc);',
@@ -613,6 +702,15 @@ def _load_lock(path: pathlib.Path | None) -> dict[str, object]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if value.get("schema") != "pto-asl-model-lock-v1":
         raise ValueError("model lock schema mismatch")
+    expected_release = {
+        "architecture_version": RELEASE,
+        "publication_version": PUBLICATION_VERSION,
+        "encoding_abi": ENCODING_ABI,
+        "encoding_projection_sha256": ENCODING_PROJECTION_SHA256,
+    }
+    for field, expected in expected_release.items():
+        if value.get(field) != expected:
+            raise ValueError(f"model lock {field} mismatch")
     return value
 
 
@@ -829,6 +927,9 @@ def _load_sidecar(configuration: RunConfiguration) -> tuple[
     execution = _object(document.get("execution"), "execution")
     start = _object(document.get("start"), "start")
     result = _object(document.get("result"), "result")
+    host_request = execution.get("host_request")
+    if host_request is not None:
+        host_request = _object(host_request, "execution.host_request")
     configured = dataclasses.replace(
         configuration,
         memory_bytes=_natural(model.get("memory_bytes"), "model.memory_bytes", positive=True),
@@ -843,9 +944,22 @@ def _load_sidecar(configuration: RunConfiguration) -> tuple[
         max_steps=_natural(execution.get("max_steps"), "execution.max_steps", positive=True),
         stack_top=_natural(execution.get("stack_top"), "execution.stack_top"),
         start_pc=_natural(start.get("pc"), "start.pc"),
+        start_acr=_natural(start.get("acr", 0), "start.acr"),
         return_pc=_natural(start.get("return_pc"), "start.return_pc"),
         result_address=_natural(result.get("address"), "result.address"),
         result_size=_natural(result.get("size"), "result.size", positive=True),
+        host_request_number=(
+            _natural(host_request.get("number"), "execution.host_request.number")
+            if host_request is not None else None
+        ),
+        host_request_argument0=(
+            _natural(host_request.get("argument0"), "execution.host_request.argument0")
+            if host_request is not None else None
+        ),
+        service_request_type=(
+            _natural(host_request.get("service_request_type"), "execution.host_request.service_request_type")
+            if host_request is not None else None
+        ),
     )
     return configured, document, hashlib.sha256(content).hexdigest()
 
@@ -958,8 +1072,12 @@ def parse_result(stdout: str, result_size: int) -> tuple[bytes, int]:
 def run(configuration: RunConfiguration) -> dict[str, object]:
     run_started = time.perf_counter()
     configuration, sidecar_document, sidecar_sha256 = _load_sidecar(configuration)
-    image = parse_elf(configuration.elf, configuration.memory_bytes)
     lock = _load_lock(configuration.lock)
+    image = parse_elf(
+        configuration.elf,
+        configuration.memory_bytes,
+        require_pto_identity=True,
+    )
     _verify_identity(configuration, lock)
     if sidecar_document is not None:
         _validate_sidecar(configuration, image, lock, sidecar_document)
@@ -995,7 +1113,7 @@ def run(configuration: RunConfiguration) -> dict[str, object]:
             + b"\n"
             + harness.encode("utf-8")
         )
-        completed = subprocess.run(
+        completed = _run_aslref(
             [
                 "/bin/sh",
                 "-c",
@@ -1005,10 +1123,7 @@ def run(configuration: RunConfiguration) -> dict[str, object]:
                 typecheck_option,
                 str(combined),
             ],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
+            _execution_timeout(configuration),
         )
     aslref_elapsed_ms = (time.perf_counter() - aslref_started) * 1000.0
     if completed.returncode != 0:
@@ -1029,6 +1144,10 @@ def run(configuration: RunConfiguration) -> dict[str, object]:
             "path": configuration.elf.name,
             "sha256": image.sha256,
             "entry": image.entry,
+            "pto_isa_identity": image.pto_isa_note.as_dict()
+            if image.pto_isa_note is not None else None,
+            "pto_isa_descriptor_sha256": image.pto_isa_note.descriptor_sha256
+            if image.pto_isa_note is not None else None,
             "segments": [
                 {
                     "address": segment.address,
@@ -1043,9 +1162,18 @@ def run(configuration: RunConfiguration) -> dict[str, object]:
             "stop_pc": configuration.stop_pc,
             "stop_after_hits": configuration.stop_after_hits,
             "max_steps": configuration.max_steps,
+            "host_request": (
+                {
+                    "number": configuration.host_request_number,
+                    "argument0": configuration.host_request_argument0,
+                    "service_request_type": configuration.service_request_type,
+                }
+                if configuration.host_request_number is not None else None
+            ),
         },
         "start_policy": {
             "start_pc": configuration.start_pc or image.entry,
+            "start_acr": configuration.start_acr,
             "return_pc": configuration.return_pc,
             "mode": "direct-boot" if configuration.start_pc else "elf-entry",
         },
@@ -1069,6 +1197,11 @@ def run(configuration: RunConfiguration) -> dict[str, object]:
             "sha256": hashlib.sha256(result).hexdigest(),
         },
         "identity": lock,
+        "provenance": {
+            "pto_asl_sha256": _file_sha256(configuration.asl_spec),
+            "aslref_binary_sha256": _file_sha256(configuration.aslref),
+            "model_runner_sha256": _file_sha256(pathlib.Path(__file__)),
+        },
         "host_timing_ms": {
             "preflight": round((aslref_started - run_started) * 1000.0, 3),
             "aslref": round(aslref_elapsed_ms, 3),
@@ -1106,6 +1239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--stop-pc", type=_integer, default=0)
     parser.add_argument("--stop-after-hits", type=int, default=1)
     parser.add_argument("--start-pc", type=_integer, default=0)
+    parser.add_argument("--start-acr", type=int, default=0)
     parser.add_argument("--return-pc", type=_integer, default=0)
     parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--result-address", type=_integer, default=0)
@@ -1129,6 +1263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--result-out", type=pathlib.Path)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--lock", required=True, type=pathlib.Path)
+    parser.add_argument("--timeout-seconds", type=float)
     arguments = parser.parse_args(argv)
     manifest = run(RunConfiguration(
         asl_spec=arguments.asl_spec,
@@ -1138,6 +1273,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         stop_pc=arguments.stop_pc,
         stop_after_hits=arguments.stop_after_hits,
         start_pc=arguments.start_pc,
+        start_acr=arguments.start_acr,
         return_pc=arguments.return_pc,
         max_steps=arguments.max_steps,
         result_address=arguments.result_address,
@@ -1150,6 +1286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result_output=arguments.result_out,
         lock=arguments.lock,
         memory_backend=arguments.memory_backend,
+        timeout_seconds=arguments.timeout_seconds,
     ))
     if not arguments.quiet:
         print(json.dumps(manifest, sort_keys=True))

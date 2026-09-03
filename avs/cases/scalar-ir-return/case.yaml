@@ -1,0 +1,20 @@
+{
+  "schema": "pto-avs-case-v1",
+  "case_id": "scalar-ir-return",
+  "lane": "ir",
+  "source": "source.ll",
+  "linker_script": "case.ld",
+  "pto_ids": ["PTO-C-BSTOP-DECISION-BINDING-001"],
+  "obligation_ids": ["ASLMODEL-VERIF-SCALAR-IR-001"],
+  "features": [],
+  "avs_ids": [],
+  "expected_length_sequence": [],
+  "compile": {"tool": "clang", "arguments": ["-target", "{target}", "-ffreestanding", "-fno-pic", "-O1", "-c", "{source}", "-o", "{object}"]},
+  "link": {"tool": "ld_lld", "arguments": ["-o", "{elf}", "-T", "{linker_script}", "{object}"]},
+  "execution": {"start_acr": 0, "start_symbol": "main", "return_symbol": "cross_model_stop", "stop_symbol": "cross_model_stop", "result_symbol": "cross_model_result", "result_size_symbol": "cross_model_result_size", "stop_after_hits": 1, "max_steps": 64, "stack_top": 61440, "host_request": null},
+  "model": {"memory_bytes": 65536, "tile_elements": 1, "runtime_typecheck": "minimal", "backend": "host-sparse"},
+  "golden": {"policy": "exact", "encoding": "raw", "path": "golden.bin", "sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431", "provenance": {"source": "ASL-MODEL literal canary", "rationale": "Expected bytes are the IR-declared ASCII PASS newline sentinel and are not produced by model execution.", "model_generated": false}},
+  "profile": "pto-reference-0.58.5-v1",
+  "resource_class": "small",
+  "timeout_seconds": 120
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PTO-ISA/asl-model/avs/schemas/case-v1.schema.json",
+  "title": "PTO ASL-MODEL cross-component AVS case v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "case_id", "lane", "source", "linker_script", "pto_ids", "obligation_ids", "features", "avs_ids", "expected_length_sequence", "compile", "link", "execution", "model", "golden", "profile", "resource_class", "timeout_seconds"],
+  "properties": {
+    "schema": {"const": "pto-avs-case-v1"}, "case_id": {"type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "lane": {"enum": ["c", "cxx", "ir", "intrinsic", "asm"]}, "source": {"type": "string", "minLength": 1}, "linker_script": {"type": "string", "minLength": 1},
+    "pto_ids": {"$ref": "#/$defs/nonemptyStrings"}, "obligation_ids": {"$ref": "#/$defs/nonemptyStrings"}, "features": {"$ref": "#/$defs/strings"}, "avs_ids": {"$ref": "#/$defs/strings"}, "expected_length_sequence": {"type": "array", "items": {"enum": [16, 32, 48, 64]}},
+    "compile": {"$ref": "#/$defs/command"}, "link": {"$ref": "#/$defs/command"},
+    "execution": {"type": "object", "additionalProperties": false, "required": ["start_acr", "start_symbol", "return_symbol", "stop_symbol", "result_symbol", "result_size_symbol", "stop_after_hits", "max_steps", "stack_top", "host_request"], "properties": {"start_acr": {"type": "integer", "minimum": 0, "maximum": 15}, "start_symbol": {"type": "string"}, "return_symbol": {"type": "string"}, "stop_symbol": {"type": "string"}, "result_symbol": {"type": "string"}, "result_size_symbol": {"type": "string"}, "stop_after_hits": {"type": "integer", "minimum": 1}, "max_steps": {"type": "integer", "minimum": 1}, "stack_top": {"type": "integer", "minimum": 1}, "host_request": {"type": ["object", "null"], "additionalProperties": false, "required": ["number", "argument0", "service_request_type"], "properties": {"number": {"type": "integer", "minimum": 0}, "argument0": {"type": "integer", "minimum": 0}, "service_request_type": {"type": "integer", "minimum": 0, "maximum": 15}}}}},
+    "model": {"type": "object", "additionalProperties": false, "required": ["memory_bytes", "tile_elements", "runtime_typecheck", "backend"], "properties": {"memory_bytes": {"type": "integer", "minimum": 256}, "tile_elements": {"type": "integer", "minimum": 1}, "runtime_typecheck": {"enum": ["strict", "minimal"]}, "backend": {"enum": ["reference-array", "host-sparse"]}}},
+    "golden": {"type": "object", "additionalProperties": false, "required": ["policy", "encoding", "path", "sha256", "provenance"], "properties": {"policy": {"const": "exact"}, "encoding": {"enum": ["raw", "hex"]}, "path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "provenance": {"type": "object", "additionalProperties": false, "required": ["source", "rationale", "model_generated"], "properties": {"source": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "model_generated": {"const": false}}}}},
+    "profile": {"type": "string", "minLength": 1}, "resource_class": {"type": "string", "minLength": 1}, "timeout_seconds": {"type": "integer", "minimum": 1}
+  },
+  "$defs": {"strings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}, "nonemptyStrings": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true}, "command": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"enum": ["clang", "llvm_mc", "ld_lld"]}, "arguments": {"$ref": "#/$defs/strings"}}}}
+}

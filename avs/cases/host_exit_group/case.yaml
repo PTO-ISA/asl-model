@@ -1,0 +1,14 @@
+{
+  "schema": "pto-avs-case-v1", "case_id": "host_exit_group", "lane": "asm",
+  "source": "source.S", "linker_script": "case.ld",
+  "pto_ids": ["PTO-INST-SCALAR-ACRC", "PTO-REQ-INSTRUCTION-FETCH-001", "PTO-REQ-SCALAR-BODY-ENTRY-001"],
+  "obligation_ids": ["ASLMODEL-VERIF-HOST-EXIT-GROUP-001"], "features": ["host-request"],
+  "avs_ids": ["PTO-AVS-SCALAR-BODY-ENTRY-SYS-001", "PTO-AVS-SYS-ACRC-EXEC-001", "PTO-AVS-SYS-ACRC-TERMINAL-001"],
+  "expected_length_sequence": [16, 32, 32, 32],
+  "compile": {"tool": "clang", "arguments": ["-target", "{target}", "-c", "{source}", "-o", "{object}"]},
+  "link": {"tool": "ld_lld", "arguments": ["-o", "{elf}", "-T", "{linker_script}", "{object}"]},
+  "execution": {"start_acr": 2, "start_symbol": "_start", "return_symbol": "cross_model_stop", "stop_symbol": "cross_model_stop", "result_symbol": "cross_model_result", "result_size_symbol": "cross_model_result_size", "stop_after_hits": 1, "max_steps": 4, "stack_top": 61440, "host_request": {"number": 94, "argument0": 7, "service_request_type": 1}},
+  "model": {"memory_bytes": 65536, "tile_elements": 1, "runtime_typecheck": "minimal", "backend": "host-sparse"},
+  "golden": {"policy": "exact", "encoding": "hex", "path": "golden.hex", "sha256": "3b5934fd00e0c9bb656f218174116145ac2519db55d3e9e5cdc6dc2f730b893d", "provenance": {"source": "PTO-SPEC functional corpus f56c8277", "rationale": "Expected bytes are the source-declared host-exit sentinel; request number, argument, type, and saved TPC are checked separately.", "model_generated": false}},
+  "profile": "pto-functional-reference-v1", "resource_class": "small", "timeout_seconds": 120
+}

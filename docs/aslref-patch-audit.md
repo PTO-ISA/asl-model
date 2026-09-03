@@ -1,7 +1,7 @@
 # ASLRef patch audit
 
 The reference runner consumes ASLRef commit
-`0b6e09066d4186c8a26e02e3bb884bd664d5eb34`, exactly matching the PTO-SPEC
+`5873cbb69312d92b4b97131cff840ec621b12ddf`, exactly matching the PTO-SPEC
 `.aslref-version` at the model lock's PTO commit.
 
 The initial implementation applies no patch to ASLRef:

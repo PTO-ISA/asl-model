@@ -79,6 +79,7 @@ module InterpreterConfig = struct
   let display_call_stack_on_error = false
   let track_symbolic_path = false
   let bit_clear_optimisation = false
+  let out_buffer = None
 end
 
 module HostInterpreter = Interpreter.Make (HostBackend) (InterpreterConfig)
@@ -92,6 +93,7 @@ let type_check_config =
     let fine_grained_side_effects = false
     let use_conflicting_side_effects_extension = false
     let override_mode = Typing.Permissive
+    let err_buffer = None
   end : Typing.ANNOTATE_CONFIG)
 
 let exit_value = function

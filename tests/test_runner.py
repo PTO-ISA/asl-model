@@ -5,7 +5,9 @@ import hashlib
 import json
 import pathlib
 import struct
+import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -16,6 +18,7 @@ from pto_asl_model.runner import (
     SECTION_HEADER,
     SYMBOL_ENTRY,
     ElfError,
+    ASLRefTimeoutError,
     RunConfiguration,
     build_harness,
     main,
@@ -24,6 +27,7 @@ from pto_asl_model.runner import (
     specialize_reference_profile,
     _load_sidecar,
     _validate_sidecar,
+    _run_aslref,
 )
 
 
@@ -94,6 +98,14 @@ def make_symbol_elf(path: pathlib.Path) -> None:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_hung_aslref_process_is_terminated_by_timeout(self) -> None:
+        started = time.monotonic()
+        with self.assertRaisesRegex(ASLRefTimeoutError, "timed out"):
+            _run_aslref(
+                [sys.executable, "-c", "import time; time.sleep(10)"], 0.05
+            )
+        self.assertLess(time.monotonic() - started, 2.0)
+
     def test_quiet_cli_suppresses_manifest_stdout(self) -> None:
         with mock.patch(
             "pto_asl_model.runner.run", return_value={"status": "passed"}
@@ -240,6 +252,40 @@ class RunnerTests(unittest.TestCase):
                 harness,
             )
             self.assertNotIn("ExecutePTOInstruction(", harness)
+
+    def test_host_request_policy_accepts_only_exact_terminal_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "case.elf"
+            make_elf(path)
+            image = parse_elf(path)
+            harness = build_harness(image, RunConfiguration(
+                asl_spec=path, aslref=path, elf=path,
+                stop_pc=0x102, max_steps=4,
+                result_address=0x100, result_size=2,
+                host_request_number=94,
+                host_request_argument0=7,
+                service_request_type=1,
+                return_pc=0x102,
+            ))
+            self.assertIn("_LastFault == Fault_ServiceRequest", harness)
+            self.assertIn("UInt(ReadPEGPR(0, 9)) == 94", harness)
+            self.assertIn("UInt(ReadPEGPR(0, 2)) == 7", harness)
+            self.assertIn(
+                "_TrapContexts[[CurrentACR()]].tpc == Zeros{PTO_XLEN} + 0x102",
+                harness,
+            )
+            self.assertIn("UInt(_TrapContexts[[CurrentACR()]].tpc)", harness)
+
+            with self.assertRaisesRegex(ValueError, "terminal policy is incomplete"):
+                build_harness(image, RunConfiguration(
+                    asl_spec=path, aslref=path, elf=path,
+                    stop_pc=0x102, max_steps=4,
+                    result_address=0x100, result_size=2,
+                    host_request_number=94,
+                    host_request_argument0=7,
+                    service_request_type=1,
+                    return_pc=0,
+                ))
 
     def test_stop_policy_can_require_a_later_pc_hit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PTO-ISA/asl-model/schemas/pto-closure-lock-v1.schema.json",
+  "title": "PTO closure final lock v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "identity", "repositories", "tools", "target", "model", "corpus", "obligations"],
+  "properties": {
+    "schema": {"const": "pto-closure-lock-v1"},
+    "identity": {"$ref": "#/$defs/identity"},
+    "repositories": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pto_spec", "llvm", "asl_model", "normative_language", "aslref"],
+      "properties": {
+        "pto_spec": {"$ref": "#/$defs/repositoryIdentity"}, "llvm": {"$ref": "#/$defs/repositoryIdentity"},
+        "asl_model": {"$ref": "#/$defs/repositoryIdentity"}, "normative_language": {"$ref": "#/$defs/repositoryIdentity"},
+        "aslref": {"$ref": "#/$defs/repositoryIdentity"}
+      }
+    },
+    "tools": {
+      "type": "object", "additionalProperties": false, "required": ["clang", "llvm_mc", "ld_lld", "aslref"],
+      "properties": {"clang": {"$ref": "#/$defs/tool"}, "llvm_mc": {"$ref": "#/$defs/tool"}, "ld_lld": {"$ref": "#/$defs/tool"}, "aslref": {"$ref": "#/$defs/tool"}}
+    },
+    "target": {"type": "object", "additionalProperties": false, "required": ["triple"], "properties": {"triple": {"type": "string", "minLength": 1}}},
+    "model": {
+      "type": "object", "additionalProperties": false, "required": ["abi", "worker_protocol", "backend", "profile"],
+      "properties": {"abi": {"type": "string"}, "worker_protocol": {"type": "string"}, "backend": {"enum": ["host-sparse", "reference-array"]}, "profile": {"type": "string"}}
+    },
+    "corpus": {"type": "object", "additionalProperties": false, "required": ["sha256", "case_ids"], "properties": {"sha256": {"$ref": "#/$defs/sha256"}, "case_ids": {"$ref": "#/$defs/nonemptyStrings"}}},
+    "obligations": {"type": "object", "additionalProperties": false, "required": ["affected_pto_ids", "selected", "sha256"], "properties": {"affected_pto_ids": {"$ref": "#/$defs/strings"}, "selected": {"$ref": "#/$defs/nonemptyStrings"}, "sha256": {"$ref": "#/$defs/sha256"}}}
+  },
+  "$defs": {
+    "git": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "strings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "nonemptyStrings": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "repositoryIdentity": {"type": "object", "additionalProperties": false, "required": ["repository", "commit", "tree"], "properties": {"repository": {"type": "string", "pattern": "^https://github\\.com/.+\\.git$"}, "commit": {"$ref": "#/$defs/git"}, "tree": {"$ref": "#/$defs/git"}}},
+    "tool": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "identity": {"type": "object", "additionalProperties": false, "required": ["release", "publication_version", "encoding_abi", "encoding_projection_sha256"], "properties": {"release": {"const": "0.58.5"}, "publication_version": {"const": "0.58.5.0"}, "encoding_abi": {"const": "pto-isa-0.58.5-mode-function-v1"}, "encoding_projection_sha256": {"const": "f1d274691e7eeebc8117e838a26b716cfb9b455d131ded03f951be04129b1a07"}}}
+  }
+}

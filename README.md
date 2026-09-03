@@ -50,6 +50,49 @@ scripts/pto-asl-run \
 
 Run repository checks with `make check`.
 
+## PTO 0.58.5 compiler/model closure
+
+The repository owns the cross-component AVS layer for PTO 0.58.5. The
+[`scripts/pto-closure`](scripts/pto-closure) entrypoint validates an exact,
+clean PTO-SPEC/LLVM/ASL-MODEL candidate tuple, the PTO-owned NDF and ASLRef
+pins, and exact tool binaries before it compiles any case. Every input object
+and final ELF must contain exactly one canonical allocatable
+`.note.pto.isa` for release `0.58.5`, publication `0.58.5.0`, encoding ABI
+`pto-isa-0.58.5-mode-function-v1`, and the release encoding-projection hash.
+
+Closed-loop cases live under [`avs/cases`](avs/cases). They use JSON syntax in
+`case.yaml`, a deterministic YAML 1.2 subset requiring no runtime YAML parser.
+Each case explicitly maps PTO identities to compiler/model obligations and
+contains independently reviewed golden bytes. Repository-owner semantic tests
+remain in PTO-SPEC, and LLVM MC/CodeGen/LLD tests remain in LLVM.
+
+The corpus includes the four established PTO functional-model cases migrated
+from the 0.58.5 PTO-SPEC baseline: `scalar_stop_pc`, `block_64_stop_pc`,
+`tile_tadd_stop_pc`, and `host_exit_group`. Their exact instruction bytes,
+link addresses, independent results, PTO requirements, AVS IDs, and expected
+instruction-length sequences remain explicit here. C and IR scalar-return
+canaries separately exercise compiler-language lanes.
+
+The command emits four distinct canonical artifacts:
+
+- `closure-lock.json` freezes repository trees, tools, target, model profile,
+  corpus, and selected obligations;
+- per-case manifests bind source, commands, object, ELF, note, sidecar,
+  golden, result, terminal state, and the hosted runner manifest;
+- `closure-semantic-payload.json` contains only reproducible semantic inputs
+  and results;
+- `closure-run-envelope.json` binds exactly one semantic-payload digest to
+  workflow and per-run provenance.
+
+All JSON digests use UTF-8, lexicographically sorted keys, and compact
+separators. Files add one trailing newline that is not part of the canonical
+object digest. Missing tools, dirty/wrong checkouts, missing impact mappings,
+unsupported golden policies, note drift, skips, timeouts, or result mismatches
+fail closed. See [`docs/closure.md`](docs/closure.md) for the request shape and
+full CLI.
+
+Run focused contract checks with `make closure-check`.
+
 ## Performance status
 
 The one-shot process backend uses a fresh-process reset specialization. The

@@ -1,0 +1,10 @@
+format_version: "0.1"
+dependencies:
+  ndf:
+    uri: https://github.com/PTO-ISA/normative_language.git
+    revision: ed356980ce7ecb2e8482902988d5012fb54058b3
+    path: tools/ndf
+  pto-spec:
+    uri: https://github.com/PTO-ISA/pto-spec.git
+    revision: 13d550f4f63c6321f94e5c6b09da4c3986081841
+    path: vendor/pto-spec

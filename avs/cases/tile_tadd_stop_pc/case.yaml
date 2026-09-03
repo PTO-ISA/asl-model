@@ -1,0 +1,14 @@
+{
+  "schema": "pto-avs-case-v1", "case_id": "tile_tadd_stop_pc", "lane": "asm",
+  "source": "source.S", "linker_script": "case.ld",
+  "pto_ids": ["PTO-INST-TILE-TADD", "PTO-INST-TILE-TLOAD", "PTO-INST-TILE-TSTORE", "PTO-REQ-INSTRUCTION-FETCH-001"],
+  "obligation_ids": ["ASLMODEL-VERIF-TILE-TADD-STOP-PC-001"], "features": ["tile"],
+  "avs_ids": ["PTO-AVS-TILE-TADD-ELEMENTS-001", "PTO-AVS-TILE-TLOAD-DIRECT-001", "PTO-AVS-TILE-TSTORE-DIRECT-001"],
+  "expected_length_sequence": [32, 16, 16, 16, 32, 32, 32, 16, 16, 16, 32, 32, 16, 16, 16, 32, 32, 16],
+  "compile": {"tool": "clang", "arguments": ["-target", "{target}", "-c", "{source}", "-o", "{object}"]},
+  "link": {"tool": "ld_lld", "arguments": ["-o", "{elf}", "-T", "{linker_script}", "{object}"]},
+  "execution": {"start_acr": 0, "start_symbol": "_start", "return_symbol": "cross_model_stop", "stop_symbol": "cross_model_stop", "result_symbol": "cross_model_result", "result_size_symbol": "cross_model_result_size", "stop_after_hits": 1, "max_steps": 18, "stack_top": 3840, "host_request": null},
+  "model": {"memory_bytes": 65536, "tile_elements": 32768, "runtime_typecheck": "minimal", "backend": "host-sparse"},
+  "golden": {"policy": "exact", "encoding": "hex", "path": "golden.hex", "sha256": "760a3f623894c64f13b6b97fe85b3af12e097ced9bf62d76a075f7475a399dca", "provenance": {"source": "PTO-SPEC functional corpus f56c8277", "rationale": "Expected U32 50 is independently derived from the committed TLOAD inputs and TADD arithmetic.", "model_generated": false}},
+  "profile": "pto-functional-reference-v1", "resource_class": "small", "timeout_seconds": 900
+}

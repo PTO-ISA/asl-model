@@ -1,0 +1,19 @@
+format_version: "0.2"
+project: asl-model
+roots:
+  - docs/requirements/**/*.md
+id_prefixes:
+  - ASLMODEL
+domains:
+  - closure
+  - compiler
+  - model
+  - tile
+policies: {}
+dependencies:
+  ndf:
+    path: tools/ndf
+    graph: false
+  pto-spec:
+    path: vendor/pto-spec
+    graph: true

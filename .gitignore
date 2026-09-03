@@ -2,3 +2,5 @@
 /.cache/
 *.pyc
 __pycache__/
+/tools/ndf/
+/vendor/pto-spec/

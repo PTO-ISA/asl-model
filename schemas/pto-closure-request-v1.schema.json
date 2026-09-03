@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PTO-ISA/asl-model/schemas/pto-closure-request-v1.schema.json",
+  "title": "PTO closure candidate request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "identity", "repositories", "policy"],
+  "properties": {
+    "schema": {"const": "pto-closure-request-v1"},
+    "identity": {"$ref": "#/$defs/identity"},
+    "repositories": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pto_spec", "llvm", "asl_model"],
+      "properties": {
+        "pto_spec": {"$ref": "#/$defs/candidate"},
+        "llvm": {"$ref": "#/$defs/candidate"},
+        "asl_model": {"$ref": "#/$defs/candidate"}
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["affected_pto_ids", "mandatory_case_ids"],
+      "properties": {
+        "affected_pto_ids": {"$ref": "#/$defs/strings"},
+        "mandatory_case_ids": {"$ref": "#/$defs/strings"}
+      }
+    }
+  },
+  "$defs": {
+    "git": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "repository": {"type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\.git$"},
+    "strings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "commit", "path"],
+      "properties": {"repository": {"$ref": "#/$defs/repository"}, "commit": {"$ref": "#/$defs/git"}, "path": {"type": "string", "minLength": 1}}
+    },
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["release", "publication_version", "encoding_abi", "encoding_projection_sha256"],
+      "properties": {
+        "release": {"const": "0.58.5"}, "publication_version": {"const": "0.58.5.0"},
+        "encoding_abi": {"const": "pto-isa-0.58.5-mode-function-v1"},
+        "encoding_projection_sha256": {"const": "f1d274691e7eeebc8117e838a26b716cfb9b455d131ded03f951be04129b1a07"}
+      }
+    }
+  }
+}
