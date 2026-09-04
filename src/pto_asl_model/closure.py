@@ -20,6 +20,7 @@ from .closure_artifacts import (
     NDF_COMMIT,
     RUN_ENVELOPE_SCHEMA,
     SEMANTIC_PAYLOAD_SCHEMA,
+    canonical_repository_url,
     canonical_sha256,
     read_json,
     validate_case,
@@ -91,7 +92,9 @@ def _checkout_identity(candidate: dict[str, object], label: str) -> dict[str, st
     expected_commit = str(candidate["commit"])
     if commit != expected_commit:
         raise ValueError(f"{label} commit mismatch: expected {expected_commit}, got {commit}")
-    repository = _git(root, "remote", "get-url", "origin")
+    repository = canonical_repository_url(
+        _git(root, "remote", "get-url", "origin")
+    )
     if repository != candidate["repository"]:
         raise ValueError(f"{label} origin mismatch: expected {candidate['repository']}, got {repository}")
     return {
@@ -105,7 +108,9 @@ def _dependency_identity(root: pathlib.Path, repository: str, commit: str, label
     if not root.exists():
         raise ValueError(f"missing {label} checkout: {root}")
     actual_commit = _git(root, "rev-parse", "HEAD")
-    actual_repository = _git(root, "remote", "get-url", "origin")
+    actual_repository = canonical_repository_url(
+        _git(root, "remote", "get-url", "origin")
+    )
     if actual_commit != commit or actual_repository != repository:
         raise ValueError(f"{label} checkout identity mismatch")
     if _git(root, "status", "--porcelain"):

@@ -25,6 +25,7 @@ from pto_asl_model.closure_artifacts import (
     NDF_COMMIT,
     PUBLICATION_VERSION,
     RELEASE,
+    canonical_repository_url,
     canonical_json_bytes,
     canonical_sha256,
     validate_lock,
@@ -33,7 +34,7 @@ from pto_asl_model.closure_artifacts import (
     validate_semantic_payload,
 )
 from pto_asl_model.elf_note import PTOISANoteError, parse_pto_isa_note
-from pto_asl_model.runner import ASLRefTimeoutError
+from pto_asl_model.runner import ASLRefTimeoutError, _verify_identity
 
 
 ELF_HEADER = struct.Struct("<16sHHIQQQIHHHHHH")
@@ -185,6 +186,62 @@ class ClosureArtifactTests(unittest.TestCase):
         right = {"a": "PTO", "b": [2, 1]}
         self.assertEqual(canonical_json_bytes(left), b'{"a":"PTO","b":[2,1]}')
         self.assertEqual(canonical_sha256(left), canonical_sha256(right))
+
+    def test_hosted_checkout_repository_urls_are_canonicalized(self) -> None:
+        self.assertEqual(
+            canonical_repository_url("https://github.com/PTO-ISA/asl-model"),
+            "https://github.com/PTO-ISA/asl-model.git",
+        )
+        self.assertEqual(
+            canonical_repository_url("https://github.com/PTO-ISA/asl-model.git"),
+            "https://github.com/PTO-ISA/asl-model.git",
+        )
+        with self.assertRaisesRegex(ValueError, "canonical GitHub HTTPS"):
+            canonical_repository_url("git@github.com:PTO-ISA/asl-model.git")
+
+    def test_runner_identity_accepts_hosted_checkout_origins(self) -> None:
+        pto_commit = "1" * 40
+        pto_tree = "2" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            pto_root = root / "pto-spec"
+            aslref_root = root / "herdtools7"
+            pto_root.mkdir()
+            aslref_root.mkdir()
+            (pto_root / ".aslref-version").write_text(
+                ASLREF_COMMIT + "\n", encoding="ascii"
+            )
+            configuration = mock.Mock(
+                asl_spec=pto_root / "build/pto-spec.asl",
+                aslref=aslref_root / "aslref",
+            )
+            lock = {
+                "pto_commit": pto_commit,
+                "pto_tree": pto_tree,
+                "pto_repository": "https://github.com/PTO-ISA/pto-spec.git",
+                "aslref_commit": ASLREF_COMMIT,
+                "aslref_repository": "https://github.com/PTO-ISA/herdtools7.git",
+            }
+
+            def git_value(checkout: pathlib.Path, *arguments: str) -> str:
+                values = {
+                    (pto_root, ("rev-parse", "HEAD")): pto_commit,
+                    (pto_root, ("rev-parse", "HEAD^{tree}")): pto_tree,
+                    (pto_root, ("remote", "get-url", "origin")):
+                        "https://github.com/PTO-ISA/pto-spec",
+                    (aslref_root, ("rev-parse", "HEAD")): ASLREF_COMMIT,
+                    (aslref_root, ("remote", "get-url", "origin")):
+                        "https://github.com/PTO-ISA/herdtools7",
+                }
+                return values[(checkout, arguments)]
+
+            with mock.patch(
+                "pto_asl_model.runner._git_root",
+                side_effect=[pto_root, aslref_root],
+            ), mock.patch(
+                "pto_asl_model.runner._git_value", side_effect=git_value
+            ):
+                _verify_identity(configuration, lock)
 
     def test_lock_rejects_extra_fields_and_wrong_ndf_pin(self) -> None:
         candidate = lock()
