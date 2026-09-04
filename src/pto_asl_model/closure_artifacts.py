@@ -27,6 +27,9 @@ ASLREF_COMMIT = "5873cbb69312d92b4b97131cff840ec621b12ddf"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 GIT_ID_RE = re.compile(r"[0-9a-f]{40}\Z")
 REPOSITORY_RE = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git\Z")
+HOSTED_REPOSITORY_RE = re.compile(
+    r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z"
+)
 CASE_ID_RE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*\Z")
 TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
 
@@ -40,6 +43,15 @@ def canonical_json_bytes(value: object) -> bytes:
 
 def canonical_sha256(value: object) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def canonical_repository_url(repository: str) -> str:
+    """Normalize a GitHub Actions checkout origin to the lock URL form."""
+    if REPOSITORY_RE.fullmatch(repository) is not None:
+        return repository
+    if HOSTED_REPOSITORY_RE.fullmatch(repository) is not None:
+        return repository + ".git"
+    raise ValueError("repository origin is not a canonical GitHub HTTPS URL")
 
 
 def write_canonical_json(path: pathlib.Path, value: object) -> None:
@@ -409,7 +421,7 @@ __all__ = [
     "ENCODING_PROJECTION_SHA256", "LOCK_SCHEMA", "NDF_COMMIT",
     "PUBLICATION_VERSION", "RELEASE", "REQUEST_SCHEMA",
     "RUN_ENVELOPE_SCHEMA", "SEMANTIC_PAYLOAD_SCHEMA", "canonical_json_bytes",
-    "canonical_sha256", "read_json", "validate_case", "validate_identity",
+    "canonical_repository_url", "canonical_sha256", "read_json", "validate_case", "validate_identity",
     "validate_lock", "validate_request", "validate_run_envelope",
     "validate_semantic_payload", "write_canonical_json",
 ]

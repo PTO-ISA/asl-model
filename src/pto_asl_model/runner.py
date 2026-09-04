@@ -22,6 +22,7 @@ from .closure_artifacts import (
     ENCODING_PROJECTION_SHA256,
     PUBLICATION_VERSION,
     RELEASE,
+    canonical_repository_url,
 )
 from .elf_note import PTOISANote, parse_pto_isa_note
 
@@ -878,10 +879,12 @@ def _verify_identity(configuration: RunConfiguration,
     expected = {
         "pto_commit": _git_value(pto_root, "rev-parse", "HEAD"),
         "pto_tree": _git_value(pto_root, "rev-parse", "HEAD^{tree}"),
-        "pto_repository": _git_value(pto_root, "remote", "get-url", "origin"),
+        "pto_repository": canonical_repository_url(
+            _git_value(pto_root, "remote", "get-url", "origin")
+        ),
         "aslref_commit": _git_value(aslref_root, "rev-parse", "HEAD"),
-        "aslref_repository": _git_value(
-            aslref_root, "remote", "get-url", "origin"
+        "aslref_repository": canonical_repository_url(
+            _git_value(aslref_root, "remote", "get-url", "origin")
         ),
     }
     for field, actual in expected.items():
