@@ -335,9 +335,9 @@ class ClosureArtifactTests(unittest.TestCase):
             sorted(cases),
             [
                 "block_64_stop_pc", "cube_internal_acc_hints",
-                "cube_reduce_expand_layouts", "host_exit_group",
-                "scalar-c-return", "scalar-ir-return", "scalar_stop_pc",
-                "tile_tadd_stop_pc",
+                "cube_reduce_expand_layouts", "gm_atom_red_family",
+                "host_exit_group", "scalar-c-return", "scalar-ir-return",
+                "scalar_stop_pc", "tile_tadd_stop_pc",
             ],
         )
         selected, obligations = _select_cases(cases, ["PTO-INST-TILE-TADD"], [])
@@ -363,6 +363,48 @@ class ClosureArtifactTests(unittest.TestCase):
                 "ASLMODEL-VERIF-INTERNAL-ACC-HINTS-001",
             ],
         )
+        mgather = {
+            "ADD", "AND", "CAS", "DEC", "EXCH", "INC", "MAX", "MIN",
+            "OR", "XOR",
+        }
+        mscatter = {
+            "ADD", "AND", "DEC", "INC", "MAX", "MIN", "OR", "POPC", "XOR",
+        }
+        gm_atom_red_ids = (
+            {f"PTO-INST-TILE-MGATHER-{operation}" for operation in mgather}
+            | {f"PTO-INST-TILE-MSCATTER-{operation}"
+               for operation in mscatter}
+            | {f"PTO-INST-BLOCK-BSTART-MGATHER-{operation}"
+               for operation in mgather - {"CAS"}}
+            | {f"PTO-INST-BLOCK-BSTART-MSCATTER-{operation}"
+               for operation in mscatter}
+        )
+        self.assertEqual(len(gm_atom_red_ids), 37)
+        self.assertEqual(
+            cases["gm_atom_red_family"][1]["pto_ids"],
+            sorted(gm_atom_red_ids),
+        )
+        selected, obligations = _select_cases(
+            cases, sorted(gm_atom_red_ids), [],
+        )
+        self.assertEqual(selected, ["gm_atom_red_family"])
+        self.assertEqual(
+            obligations, ["ASLMODEL-VERIF-GM-ATOM-RED-FAMILY-001"],
+        )
+        source = (root / "gm_atom_red_family" / "source.S").read_text(
+            encoding="utf-8"
+        )
+        for operation in mgather - {"CAS"}:
+            self.assertIn(f"RUN_MGATHER {operation}", source)
+        self.assertIn("BSTART.MGATHER.CAS U32", source)
+        for operation in mscatter - {"POPC"}:
+            self.assertTrue(
+                f"RUN_MSCATTER {operation}" in source
+                or f"RUN_MSCATTER_M {operation}" in source
+            )
+        self.assertIn("BSTART.MSCATTER.POPC U32", source)
+        self.assertIn("B.IOT t#1, mask=1111, last", source)
+        self.assertNotIn("RUN_MSCATTER POPC", source)
         with self.assertRaisesRegex(ValueError, "no AVS case"):
             _select_cases(cases, ["PTO-UNKNOWN"], [])
         with self.assertRaisesRegex(

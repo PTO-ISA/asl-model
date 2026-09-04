@@ -92,6 +92,20 @@ architectural results when no final-output post-processing is selected.
 AVS case `cube_internal_acc_hints` MUST satisfy the explicit-C input-prefetch
 and raw-output replacement-hint transparency obligation.
 
+## GM atomic and reduction family execution {#ASLMODEL-REQ-GM-ATOM-RED-FAMILY-001}
+<!-- ndf: kind=requirement modality=must refinement=L1 domain=tile status=active conforms-to=ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-ADD,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-AND,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-DEC,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-EXCH,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-INC,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-MAX,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-MIN,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-OR,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MGATHER-XOR,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-ADD,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-AND,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-DEC,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-INC,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-MAX,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-MIN,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-OR,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-POPC,ndf://pto-spec/PTO-INST-BLOCK-BSTART-MSCATTER-XOR,ndf://pto-spec/PTO-INST-TILE-MGATHER-ADD,ndf://pto-spec/PTO-INST-TILE-MGATHER-AND,ndf://pto-spec/PTO-INST-TILE-MGATHER-CAS,ndf://pto-spec/PTO-INST-TILE-MGATHER-DEC,ndf://pto-spec/PTO-INST-TILE-MGATHER-EXCH,ndf://pto-spec/PTO-INST-TILE-MGATHER-INC,ndf://pto-spec/PTO-INST-TILE-MGATHER-MAX,ndf://pto-spec/PTO-INST-TILE-MGATHER-MIN,ndf://pto-spec/PTO-INST-TILE-MGATHER-OR,ndf://pto-spec/PTO-INST-TILE-MGATHER-XOR,ndf://pto-spec/PTO-INST-TILE-MSCATTER-ADD,ndf://pto-spec/PTO-INST-TILE-MSCATTER-AND,ndf://pto-spec/PTO-INST-TILE-MSCATTER-DEC,ndf://pto-spec/PTO-INST-TILE-MSCATTER-INC,ndf://pto-spec/PTO-INST-TILE-MSCATTER-MAX,ndf://pto-spec/PTO-INST-TILE-MSCATTER-MIN,ndf://pto-spec/PTO-INST-TILE-MSCATTER-OR,ndf://pto-spec/PTO-INST-TILE-MSCATTER-POPC,ndf://pto-spec/PTO-INST-TILE-MSCATTER-XOR -->
+
+The closure MUST compile, link, and execute one U32 request at a unique GM
+address for each accepted MGATHER atomic and MSCATTER reduction operation. It
+MUST compare all nineteen final GM values and all ten MGATHER observed-old
+values with independently calculated and committed golden bytes.
+
+## GM atomic and reduction family verification {#ASLMODEL-VERIF-GM-ATOM-RED-FAMILY-001}
+<!-- ndf: kind=verification modality=must refinement=L3 domain=tile status=active verifies=ASLMODEL-REQ-GM-ATOM-RED-FAMILY-001 -->
+
+AVS case `gm_atom_red_family` MUST satisfy the complete changed-identity,
+unique-address, final-value, and observed-old-value obligation.
+
 ## Host exit request {#ASLMODEL-REQ-HOST-EXIT-GROUP-001}
 <!-- ndf: kind=requirement modality=must refinement=L1 domain=closure status=active conforms-to=ndf://pto-spec/PTO-REQ-INSTRUCTION-FETCH-001,ndf://pto-spec/PTO-REQ-SCALAR-BODY-ENTRY-001,ndf://pto-spec/PTO-INST-SCALAR-ACRC -->
 
