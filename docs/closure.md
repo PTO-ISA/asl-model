@@ -17,7 +17,7 @@ commits and local checkout paths:
     "release": "0.58.5",
     "publication_version": "0.58.5.1",
     "encoding_abi": "pto-isa-0.58.5-mode-function-v1",
-    "encoding_projection_sha256": "747c509525579dc84038738c9a3ba26ae6ed4ef29a1d302cefb2a7b07fc150a8"
+    "encoding_projection_sha256": "b365bb85c47dfaaeb6a3225bf60175694b3cdf5d887951ab43ee1e36a8c21e48"
   },
   "repositories": {
     "pto_spec": {"repository": "https://github.com/PTO-ISA/pto-spec.git", "commit": "<40 hex>", "path": "/checkout/pto-spec"},
