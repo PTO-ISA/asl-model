@@ -15,3 +15,46 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure and test
         run: make check
+
+  shared-library-abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure, build, and install shared library
+        run: |
+          cmake -S . -B build-shared-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPTO_ASL_MODEL_BUILD_TESTS=ON
+          cmake --build build-shared-ci -j 8
+          cmake --install build-shared-ci --prefix "$PWD/install-shared-ci"
+      - name: Verify shared-library ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          library=build-shared-ci/libpto_asl_model.so.2
+          installed_library=install-shared-ci/lib/libpto_asl_model.so.2
+          test -f "$library"
+          test -f "$installed_library"
+          soname="$(readelf -d "$library" | sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p')"
+          test "$soname" = libpto_asl_model.so.2
+          nm -D --defined-only --format=posix "$library" \
+            | awk '{print $1}' \
+            | LC_ALL=C sort -u > build-shared-ci/defined-exports.txt
+          printf '%s\n' pto_model_run_elf > build-shared-ci/expected-exports.txt
+          diff -u \
+            build-shared-ci/expected-exports.txt \
+            build-shared-ci/defined-exports.txt
+      - name: Verify installed package consumers
+        run: |
+          cmake -S tests/cmake_package_consumer/shared \
+            -B build-package-consumer-shared-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/install-shared-ci"
+          cmake --build build-package-consumer-shared-ci -j 8
+          ctest --test-dir build-package-consumer-shared-ci --output-on-failure
+          cmake -S tests/cmake_package_consumer/static \
+            -B build-package-consumer-static-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PWD/install-shared-ci"
+          cmake --build build-package-consumer-static-ci -j 8
+          ctest --test-dir build-package-consumer-static-ci --output-on-failure

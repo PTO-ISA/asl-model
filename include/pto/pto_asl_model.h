@@ -7,6 +7,14 @@
 extern "C" {
 #endif
 
+#if defined(_WIN32)
+#define PTO_ASL_MODEL_API __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define PTO_ASL_MODEL_API __attribute__((visibility("default")))
+#else
+#define PTO_ASL_MODEL_API
+#endif
+
 #define PTO_ASL_MODEL_ABI_VERSION UINT32_C(0x00020000)
 
 typedef uint32_t pto_model_status_t;
@@ -44,7 +52,7 @@ typedef struct {
 /* Execute one complete hosted ELF run through the reference backend. The
  * runner transport is implementation-owned; the caller observes only this
  * versioned ABI and the deterministic manifest. */
-pto_model_status_t pto_model_run_elf(
+PTO_ASL_MODEL_API pto_model_status_t pto_model_run_elf(
     const pto_model_elf_run_config_t *config);
 
 #ifdef __cplusplus

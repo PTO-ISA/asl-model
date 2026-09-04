@@ -137,3 +137,13 @@ snapshot lifecycle, identity, transport, and promotion gates are in
 Run repository checks with `make check`. The C/C++ consumer links
 `PTOASLModel::pto_asl_model` and calls the versioned
 `pto_model_run_elf` function declared in `include/pto/pto_asl_model.h`.
+
+The CMake build publishes both `libpto_asl_model.so.2` and the legacy-named
+`libpto_asl_model.a` archive. Consumers such as `gfrun` link
+`PTOASLModel::pto_asl_model` and use the versioned C ABI. A pure C consumer can
+link that shared target. The static `PTOASLModel::pto_asl_model_static` target
+contains the C++ implementation and therefore requires a C++ linker; it does
+not provide a second ABI. The model library still launches the configured ASL
+runner and owns the complete ELF execution. Set the runtime library path to the
+installation `lib` directory when invoking a consumer outside an installed
+environment.
