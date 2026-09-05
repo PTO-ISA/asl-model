@@ -8,7 +8,11 @@ import json
 import pathlib
 import struct
 
-from .closure_artifacts import canonical_json_bytes, validate_identity
+from .closure_artifacts import (
+    PUBLICATION_VERSION,
+    canonical_json_bytes,
+    validate_identity,
+)
 
 
 ELF_HEADER = struct.Struct("<16sHHIQQQIHHHHHH")
@@ -126,7 +130,7 @@ def parse_pto_isa_note(path: pathlib.Path) -> PTOISANote:
     try:
         validate_identity({
             "release": value.get("release"),
-            "publication_version": "0.58.5.1",
+            "publication_version": PUBLICATION_VERSION,
             "encoding_abi": value.get("encoding_abi"),
             "encoding_projection_sha256": value.get("encoding_projection_sha256"),
         }, ".note.pto.isa")

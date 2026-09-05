@@ -15,9 +15,9 @@ SEMANTIC_PAYLOAD_SCHEMA = "pto-closure-semantic-payload-v1"
 RUN_ENVELOPE_SCHEMA = "pto-closure-run-envelope-v1"
 CASE_SCHEMA = "pto-avs-case-v1"
 
-RELEASE = "0.58.5"
-PUBLICATION_VERSION = "0.58.5.1"
-ENCODING_ABI = "pto-isa-0.58.5-mode-function-v1"
+RELEASE = "0.58.6"
+PUBLICATION_VERSION = "0.58.6.0"
+ENCODING_ABI = "pto-isa-0.58.6-mode-function-v1"
 ENCODING_PROJECTION_SHA256 = (
     "bc0718ee31162ba7f6ea04d2a5853c49fe30e7cb36b33c0704c58678710a0c87"
 )

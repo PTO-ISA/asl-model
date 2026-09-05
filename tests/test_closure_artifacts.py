@@ -291,7 +291,7 @@ class ClosureArtifactTests(unittest.TestCase):
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document["$schema"], "https://json-schema.org/draft/2020-12/schema")
 
-    def test_pto_note_accepts_one_canonical_0585_record(self) -> None:
+    def test_pto_note_accepts_one_canonical_0586_record(self) -> None:
         descriptor = canonical_json_bytes({
             "encoding_abi": ENCODING_ABI,
             "encoding_projection_sha256": ENCODING_PROJECTION_SHA256,
@@ -321,7 +321,7 @@ class ClosureArtifactTests(unittest.TestCase):
             make_note_elf(elf, canonical_json_bytes(valid) + b"\0")
             with self.assertRaisesRegex(PTOISANoteError, "UTF-8 JSON"):
                 parse_pto_isa_note(elf)
-            make_note_elf(elf, b'{"release": "0.58.5"}')
+            make_note_elf(elf, b'{"release": "0.58.6"}')
             with self.assertRaisesRegex(PTOISANoteError, "canonical compact"):
                 parse_pto_isa_note(elf)
             make_note_elf(elf, canonical_json_bytes(valid), note_flags=0)
