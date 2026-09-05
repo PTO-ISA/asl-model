@@ -334,7 +334,8 @@ class ClosureArtifactTests(unittest.TestCase):
         self.assertEqual(
             sorted(cases),
             [
-                "block_64_stop_pc", "cube_internal_acc_hints",
+                "block_64_stop_pc", "bstart_timg2col_feature_map",
+                "cube_internal_acc_hints",
                 "cube_reduce_expand_layouts", "gm_atom_red_family",
                 "host_exit_group", "scalar-c-return", "scalar-ir-return",
                 "scalar_stop_pc", "tile_tadd_stop_pc",
@@ -343,6 +344,19 @@ class ClosureArtifactTests(unittest.TestCase):
         selected, obligations = _select_cases(cases, ["PTO-INST-TILE-TADD"], [])
         self.assertEqual(selected, ["tile_tadd_stop_pc"])
         self.assertIn("ASLMODEL-VERIF-TILE-TADD-STOP-PC-001", obligations)
+        selected, obligations = _select_cases(
+            cases, ["PTO-INST-BLOCK-BSTART-TIMG2COL"], []
+        )
+        self.assertEqual(selected, ["bstart_timg2col_feature_map"])
+        self.assertEqual(
+            obligations, ["ASLMODEL-VERIF-BSTART-TIMG2COL-001"]
+        )
+        source = (
+            root / "bstart_timg2col_feature_map" / "source.S"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".byte 0x81,0x11,0xc1,0xd9", source)
+        self.assertIn("B.IOS mask=1000, ->S8<128B>", source)
+        self.assertIn("B.IOS S8, mask=1000", source)
         selected, obligations = _select_cases(
             cases,
             [

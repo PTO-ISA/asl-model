@@ -1,0 +1,14 @@
+{
+  "schema": "pto-avs-case-v1", "case_id": "bstart_timg2col_feature_map", "lane": "asm",
+  "source": "source.S", "linker_script": "case.ld",
+  "pto_ids": ["PTO-INST-BLOCK-BSTART-TIMG2COL"],
+  "obligation_ids": ["ASLMODEL-VERIF-BSTART-TIMG2COL-001"], "features": ["tile"],
+  "avs_ids": ["PTO-AVS-BLOCK-BSTART-TIMG2COL-SHARED-SINGLETON-PE2-001"],
+  "expected_length_sequence": [32, 32, 32, 32, 32, 32, 16, 16, 16, 32, 32, 32, 16, 32, 32, 32, 16],
+  "compile": {"tool": "clang", "arguments": ["-target", "{target}", "-c", "{source}", "-o", "{object}"]},
+  "link": {"tool": "ld_lld", "arguments": ["-o", "{elf}", "-T", "{linker_script}", "{object}"]},
+  "execution": {"start_acr": 0, "start_symbol": "_start", "return_symbol": "cross_model_stop", "stop_symbol": "cross_model_stop", "result_symbol": "cross_model_result", "result_size_symbol": "cross_model_result_size", "stop_after_hits": 1, "max_steps": 17, "stack_top": 3840, "host_request": null},
+  "model": {"memory_bytes": 65536, "tile_elements": 32768, "runtime_typecheck": "minimal", "backend": "host-sparse"},
+  "golden": {"policy": "exact", "encoding": "hex", "path": "golden.hex", "sha256": "828725292bd10bd967ed060972abe8a4d647709f9da167be7dbfba933b12f41c", "provenance": {"source": "ASL-MODEL independently calculated U8 feature-map vector", "rationale": "A one-row 32-column U8 input with unit kernel, stride, and dilation must publish through singleton Shared IMG2COL and store the exact byte sequence 1 through 32.", "model_generated": false}},
+  "profile": "pto-functional-reference-v1", "resource_class": "small", "timeout_seconds": 900
+}
