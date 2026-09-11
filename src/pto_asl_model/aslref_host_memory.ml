@@ -55,7 +55,23 @@ module HostBackend = struct
         []
     | _ -> invalid_arg "WritePhysicalMemoryByte takes two arguments"
 
+  (* The sparse host store is the access authority for hosted profiles.  PTO
+     ASL still owns translation, access-class checks, faults, and ordering;
+     these hooks only prevent the portable bounded array from rejecting host
+     addresses before the byte-level bridge is reached. *)
+  let host_instruction_access_permitted _parameters args =
+    match args with
+    | [ _address; _size_bytes ] -> [ Native.NV_Literal (AST.L_Bool true) ]
+    | _ -> invalid_arg "HostInstructionAccessPermitted takes two arguments"
+
+  let host_data_access_permitted _parameters args =
+    match args with
+    | [ _address; _size_bytes; _write ] ->
+        [ Native.NV_Literal (AST.L_Bool true) ]
+    | _ -> invalid_arg "HostDataAccessPermitted takes three arguments"
+
   let primitives =
+    let open ASTUtils in
     let read =
       primitive_decl ~returns:(named_ty "Byte")
         "ReadPhysicalMemoryByte" [ ("address", named_ty "Word") ]
@@ -64,7 +80,18 @@ module HostBackend = struct
       primitive_decl ~side_effecting:true "WritePhysicalMemoryByte"
         [ ("address", named_ty "Word"); ("value", named_ty "Byte") ]
     in
-    [ (read, read_physical_memory_byte); (write, write_physical_memory_byte) ]
+    let instruction_access =
+      primitive_decl ~returns:boolean "HostInstructionAccessPermitted"
+        [ ("address", named_ty "Word"); ("size_bytes", integer) ]
+    in
+    let data_access =
+      primitive_decl ~returns:boolean "HostDataAccessPermitted"
+        [ ("address", named_ty "Word"); ("size_bytes", integer);
+          ("write", boolean) ]
+    in
+    [ (read, read_physical_memory_byte); (write, write_physical_memory_byte);
+      (instruction_access, host_instruction_access_permitted);
+      (data_access, host_data_access_permitted) ]
     @ Native.DeterministicBackend.primitives
 end
 

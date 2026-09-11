@@ -132,6 +132,9 @@ class RunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('"ReadPhysicalMemoryByte"', source)
         self.assertIn('"WritePhysicalMemoryByte"', source)
+        self.assertIn('"HostInstructionAccessPermitted"', source)
+        self.assertIn('"HostDataAccessPermitted"', source)
+        self.assertEqual(source.count("AST.L_Bool true"), 2)
         self.assertNotIn("DecodeScalar", source)
         self.assertNotIn("ExecutePTOInstruction", source)
 
