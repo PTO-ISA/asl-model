@@ -1,0 +1,26 @@
+{
+  "schema": "pto.asl-model-cases.v2",
+  "cases": [
+    {
+      "id": "scalar.add.integer",
+      "instruction": "ADD",
+      "class": "scalar",
+      "source": "asl/scalar/alu/ADD.asl",
+      "test": "tests/asl/scalar/alu/ADD/scalar-exec-add-integer-001.asl"
+    },
+    {
+      "id": "tile.tadd.elements",
+      "instruction": "TADD",
+      "class": "tile",
+      "source": "asl/tile/elementwise-tile-tile/arithmetic/TADD.asl",
+      "test": "tests/asl/tile/elementwise-tile-tile/arithmetic/TADD/tile-exec-tadd-elements-001.asl"
+    },
+    {
+      "id": "tlsu.tload.direct",
+      "instruction": "TLOAD",
+      "class": "memory",
+      "source": "asl/tile/memory-and-data-movement/regular/TLOAD.asl",
+      "test": "tests/asl/tile/memory-and-data-movement/regular/TLOAD/tile-exec-tload-direct-001.asl"
+    }
+  ]
+}

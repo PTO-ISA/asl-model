@@ -1,6 +1,6 @@
 # Standalone checkout guide
 
-This directory is the complete Python-side ASL model boundary.  It can be
+This directory is the complete ASL model integration boundary. It can be
 installed and tested without importing any other local project.
 
 ## Inputs
@@ -30,14 +30,15 @@ adds bytecode compilation and whitespace validation.
 
 ## Python data contract
 
-The installable Python package contains strict, passive architectural-state
-serialization and path helpers. These DTOs can describe observed memory data,
-but they do not map storage, enforce access permissions, initialize a stack,
-load an image, or reset/restore a live model. Generated ASL and ASLRef remain
-explicit inputs to the canonical `pto_model_run_elf()` runner.
+The installable `pto_asl_model` package contains strict closure, runner, and
+passive architectural-state serialization. The `asl_model` package reuses
+those exact DTOs and adds non-release smoke/session lifecycle. Generated ASL
+and ASLRef remain explicit inputs to both surfaces.
 
 ## Extension points
 
 Keep ISA semantics in ASL. The hosted `pto_model_run_elf()` path alone handles
-ELF identity, sidecars, live memory, and execution. Reusable Python code is
-limited to passive state serialization and repository-path discovery.
+strict ELF identity, lock, sidecar, result, and closure-facing manifests.
+`asl-model` may load an ELF and manage worker/storage lifecycle for bounded
+bring-up, but it emits only `pto-asl-model-smoke-v1` evidence and may not satisfy
+strict closure.

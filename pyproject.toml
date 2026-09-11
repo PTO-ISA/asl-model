@@ -15,6 +15,16 @@ dependencies = []
 [project.optional-dependencies]
 test = []
 
+[project.scripts]
+asl-model = "asl_model.cli:main"
+
+[tool.pto-asl-model]
+# The strict closure runner remains ``pto_asl_model``.  The separate
+# ``asl_model`` package provides bounded smoke, persistent-session, and
+# multi-PE bring-up without weakening the closure contract.
+default-profile = "portable"
+cache-directory = ".cache"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
@@ -23,6 +33,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 pto_asl_model = ["architecture_state.schema.json"]
+asl_model = ["cases.json", "embedded/Worker.ml", "runtime/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,6 +1,9 @@
 /build/
+/build-*/
 /.cache/
-*.pyc
+/.venv/
+*.egg-info/
+*.py[cod]
 __pycache__/
 /tools/ndf/
 /vendor/pto-spec/

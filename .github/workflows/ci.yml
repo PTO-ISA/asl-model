@@ -16,6 +16,51 @@ jobs:
       - name: Configure and test
         run: make check
 
+  runtime-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve exact PTO-SPEC development lock
+        id: pto
+        shell: bash
+        run: |
+          commit=$(python3 -c 'import json; print(json.load(open("dependencies/pto-spec.lock"))["commit"])')
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact PTO-SPEC development input
+        uses: actions/checkout@v4
+        with:
+          repository: PTO-ISA/pto-spec
+          ref: ${{ steps.pto.outputs.commit }}
+          path: vendor/pto-spec
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare pinned OCaml toolchain
+        uses: ocaml/setup-ocaml@15d660006c1d3110d77c34b7faa3bddefe8b82f0 # v3
+        with:
+          ocaml-compiler: 5.2.1
+          opam-disable-sandboxing: true
+
+      - name: Build exact PTO-SPEC and ASLRef inputs
+        env:
+          PTO_ASLREF_ROOT: ${{ github.workspace }}/vendor/pto-spec/.cache/herdtools7
+        run: make -C vendor/pto-spec setup build
+
+      - name: Exercise persistent worker and Linx host access
+        env:
+          PTO_SPEC_ROOT: ${{ github.workspace }}/vendor/pto-spec
+          PTO_ASLREF_ROOT: ${{ github.workspace }}/vendor/pto-spec/.cache/herdtools7
+          PYTHONPATH: src
+        run: |
+          python3 -m unittest \
+            tests.test_asl_model.AslModelFrameworkTest.test_integration_spec_matches_development_lock \
+            tests.test_asl_embedded_session.EmbeddedAslRefIntegrationTest \
+            -v
+
   shared-library-abi:
     runs-on: ubuntu-latest
     steps:

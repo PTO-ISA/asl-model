@@ -13,11 +13,12 @@ initialization, stop/result policy, manifests, and the ASLRef process. PTO-SPEC
 ASL owns fetch, instruction-width selection, decode, legality, faults, PC/TPC,
 and architectural state transitions.
 
-There is no supported compatibility decoder, explicit-width step command,
-arbitrary instruction-handler call, or alternate runtime commit path. Runtime
-image, memory, stack, reset, restore, and snapshot-lifecycle classes are not
-part of the package. Architectural-state DTOs are passive serialization data;
-they cannot initialize or mutate the live runner.
+There is no compatibility decoder, arbitrary instruction-handler call, or
+alternate commit path in the strict runner. The non-release `asl_model`
+developer runtime exposes explicit-width session steps and lifecycle classes
+for diagnostics, but they do not replace `ExecuteNextPTOInstruction()` in the
+strict path and cannot produce closure evidence. Architectural-state DTOs
+remain passive serialization data shared by both namespaces.
 
 Any future accelerated backend must preserve this boundary and prove parity
 before admission. It may not introduce a private PTO decoder, opcode table,

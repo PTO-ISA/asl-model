@@ -10,19 +10,23 @@ pto_model_run_elf() → canonical runner → ASLRef → ExecuteNextPTOInstructio
 ```
 
 The package does not import simulator, emulator, benchmark, or compiler
-modules.  The specification checkout and its generated artifact are explicit
-runtime inputs. This makes the model usable from a clean checkout without
-creating a second PTO execution API.
+modules. The specification checkout and its generated artifact are explicit
+runtime inputs. The C ABI and strict closure continue to expose one canonical
+runner; the separately named `asl_model` package is a non-release developer
+runtime, not a second conformance or publication API.
 
-ELF parsing, sidecar validation, artifact identity, and hosted execution stay
-behind the single `pto_model_run_elf()` entry. The Python package contains only
-passive, strict architectural-state serialization and path helpers alongside
-that runner. It has no second image, memory, stack, lifecycle, or snapshot
-authority.
+Strict ELF identity, sidecar validation, artifact identity, and hosted
+execution stay behind the single `pto_model_run_elf()` entry. The
+`pto_asl_model` package contains the strict runner, closure policy, and passive
+state DTOs. `asl_model` provides bounded smoke, session, image, memory, stack,
+and snapshot lifecycle for developer bring-up only; its results are explicitly
+ineligible for closure.
 
-The package owns no duplicate instruction handlers or live memory policy. A
-future native backend must implement the same observable state contract and be
-admitted by differential tests before it is used for bulk workloads.
+Neither package owns instruction handlers, decode tables, or PTO semantic
+policy. Hosted byte storage and worker lifecycle remain model concerns; PTO
+ASL owns translation, permission, ordering, fetch, decode, faults, and state
+transitions. A future native backend must implement the same observable state
+contract and be admitted by differential tests before bulk use.
 
 ## Specification lifecycle
 
