@@ -35,7 +35,18 @@ class StandaloneImportTests(unittest.TestCase):
 
         self.assertEqual(pto_asl_model.run.__module__, "pto_asl_model.runner")
         project = tomllib.loads((PACKAGE_ROOT / "pyproject.toml").read_text())
-        self.assertNotIn("scripts", project["project"])
+        self.assertEqual(project["project"]["scripts"]["asl-model"], "asl_model.cli:main")
+
+    def test_standalone_runtime_is_a_separate_package(self):
+        import asl_model
+        import pto_asl_model
+
+        self.assertTrue(hasattr(asl_model, "AslBackend"))
+        self.assertEqual(Path(asl_model.__file__).resolve().parent.name, "asl_model")
+        self.assertIsNotNone(find_spec("asl_model.runtime"))
+        self.assertIsNone(find_spec("pto_asl_model.runtime"))
+        self.assertIs(asl_model.ArchitectureState, pto_asl_model.ArchitectureState)
+        self.assertIs(asl_model.StateEnvelope, pto_asl_model.StateEnvelope)
 
 
 if __name__ == "__main__":

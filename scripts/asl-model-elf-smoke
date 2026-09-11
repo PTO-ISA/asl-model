@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Convenience runner for bounded ASL-backed PTO ELF smoke tests."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import struct
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE = ROOT.parent
+ELF_MACHINE = 0xE9
+
+
+def _elf_machine(path: Path) -> int | None:
+    try:
+        data = path.read_bytes()[:20]
+    except OSError:
+        return None
+    if len(data) < 20 or data[:4] != b"\x7fELF":
+        return None
+    return struct.unpack_from("<H", data, 18)[0]
+
+
+def _find_spec() -> Path | None:
+    configured = os.environ.get("PTO_SPEC_ROOT")
+    roots = [Path(configured)] if configured else []
+    roots.extend((WORKSPACE / "pto-spec", ROOT / "vendor" / "pto-spec"))
+    for root in roots:
+        candidate = root.expanduser().resolve() / "build" / "pto-spec.asl"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _resolve_spec(path: Path) -> Path | None:
+    selected = path.expanduser().resolve()
+    if selected.is_file():
+        return selected
+    candidate = selected / "build" / "pto-spec.asl"
+    return candidate if candidate.is_file() else None
+
+
+def _find_elf() -> Path | None:
+    configured = os.environ.get("PTO_SMOKE_ELF")
+    candidates = [Path(configured)] if configured else []
+    candidates.extend([
+        WORKSPACE / "temp_cases" / "kernel_multi_thread_fa_Sq256_Skv256_Tm128_Tk128_X1_Y2_FP32_VECFP32.elf",
+        WORKSPACE / "temp_cases" / "asl_model_smoke" / "fa_asl_smoke.elf",
+    ])
+    corpus = WORKSPACE / "worktrees" / "snpubench-corpus" / "eval"
+    if corpus.is_dir():
+        candidates.extend(sorted(corpus.rglob("*.elf")))
+    # Prefer a current PTO ELF when one is available, but do not make
+    # discovery depend on a machine value during compiler bring-up.
+    fallback: Path | None = None
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        if not candidate.is_file() or _elf_machine(candidate) is None:
+            continue
+        if _elf_machine(candidate) == ELF_MACHINE:
+            return candidate.resolve()
+        fallback = candidate.resolve()
+    return fallback
+
+
+def _aslref_environment(aslref: Path | None) -> dict[str, str]:
+    """Return environment overrides for an explicitly selected ASLRef tree.
+
+    The worker consumes an ASLRef checkout (and its pinned build), not an
+    arbitrary standalone executable.  Accept a checkout or its scripts/aslref
+    launcher and let the worker perform its normal pin/build checks.
+    """
+    environment = os.environ.copy()
+    if aslref is None:
+        return environment
+    selected = aslref.expanduser().resolve()
+    root = selected.parent.parent if selected.name == "aslref" and selected.parent.name == "scripts" else selected
+    if not (root / ".git").exists():
+        raise ValueError(
+            "--aslref must name an ASLRef checkout or its scripts/aslref launcher"
+        )
+    environment["PTO_ASLREF_ROOT"] = str(root)
+    return environment
+
+
+def _error(message: str) -> int:
+    print(f"asl-model-elf-smoke: error: {message}", file=sys.stderr)
+    return 2
+
+
+def _smoke_report(result: dict[str, object], elf: Path) -> dict[str, object]:
+    """Mark bounded bring-up output so closure consumers reject it."""
+
+    try:
+        note_present = b".note.pto.isa" in elf.read_bytes()
+    except OSError:
+        note_present = False
+    report = dict(result)
+    report.update({
+        "schema": "pto-asl-model-smoke-v1",
+        "validation_level": "smoke",
+        "pto_isa_note_status": "present-unverified" if note_present else "not-provided",
+        "model_lock_status": "not-provided",
+        "sidecar_status": "not-provided",
+        "golden_status": "not-provided",
+        "closure_eligible": False,
+    })
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Run one ELF through the ASL model smoke profile."
+    )
+    parser.add_argument("elf", nargs="?", type=Path)
+    parser.add_argument("--pto-spec", type=Path)
+    parser.add_argument("--aslref", type=Path)
+    parser.add_argument("--pe-count", type=int, default=1)
+    parser.add_argument("--worker-scope", choices=("per-pe", "core", "single"), default="per-pe")
+    parser.add_argument(
+        "--experimental-core", action="store_true",
+        help="allow incomplete one-worker core scope for diagnostics only",
+    )
+    parser.add_argument("--stack-policy", choices=("explicit", "after-image", "disabled"), default="after-image")
+    parser.add_argument("--stack-top", type=lambda value: int(value, 0))
+    parser.add_argument("--stack-size", type=lambda value: int(value, 0), default=0x01000000)
+    parser.add_argument("--stack-gap", type=lambda value: int(value, 0), default=0x1000)
+    parser.add_argument("--stack-stride", type=lambda value: int(value, 0))
+    parser.add_argument("--red-zone", type=lambda value: int(value, 0), default=16)
+    parser.add_argument("--max-instructions", type=int, default=30)
+    parser.add_argument("--timeout-s", type=float)
+    parser.add_argument("--model-profile", choices=("portable", "linx-runtime"), default="linx-runtime")
+    parser.add_argument(
+        "--expected-machine", type=lambda value: int(value, 0), default=ELF_MACHINE,
+        help="required ELF e_machine value (default: 0xe9)",
+    )
+    parser.add_argument("--manifest-out", type=Path)
+    args = parser.parse_args(argv)
+
+    elf = args.elf.expanduser().resolve() if args.elf else _find_elf()
+    spec = (_resolve_spec(args.pto_spec) if args.pto_spec else _find_spec())
+    if elf is None:
+        return _error("no PTO ELF found; pass ELF or set PTO_SMOKE_ELF")
+    if spec is None:
+        return _error("cannot find generated PTO ASL; pass --pto-spec or set PTO_SPEC_ROOT")
+    if args.pe_count <= 0 or args.max_instructions <= 0:
+        return _error("--pe-count and --max-instructions must be positive")
+    if args.worker_scope == "core" and not args.experimental_core:
+        return _error("--worker-scope core requires --experimental-core")
+    if args.stack_policy == "explicit" and args.stack_top is None:
+        return _error("--stack-top is required with --stack-policy explicit")
+    try:
+        environment = _aslref_environment(args.aslref)
+    except ValueError as error:
+        return _error(str(error))
+
+    command = [
+        sys.executable, "-m", "asl_model.cli", "--pto-spec", str(spec.parent.parent),
+        "elf-run", "--backend", "asl", "--elf", str(elf),
+        "--model-profile", args.model_profile, "--stack-policy", args.stack_policy,
+        "--stack-size", hex(args.stack_size), "--stack-gap", hex(args.stack_gap),
+        "--red-zone", str(args.red_zone), "--max-instructions", str(args.max_instructions),
+        "--pe-count", str(args.pe_count),
+        "--worker-scope", args.worker_scope,
+    ]
+    if args.experimental_core:
+        command.append("--experimental-core")
+    if args.expected_machine is not None:
+        command.extend(("--expected-machine", hex(args.expected_machine)))
+    if args.stack_stride is not None:
+        command.extend(("--stack-stride", hex(args.stack_stride)))
+    if args.stack_top is not None:
+        command.extend(("--stack-top", hex(args.stack_top)))
+    if args.timeout_s is not None:
+        command.extend(("--timeout-s", str(args.timeout_s)))
+    if args.manifest_out is not None:
+        # CLI currently prints the canonical report; preserve it in a file
+        # without adding a second execution path.
+        args.manifest_out.parent.mkdir(parents=True, exist_ok=True)
+    environment["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + environment.get("PYTHONPATH", "")
+    completed = subprocess.run(command, env=environment, text=True, capture_output=True, check=False)
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return _error((completed.stderr or completed.stdout).strip() or f"runner exited {completed.returncode}")
+    if not isinstance(result, dict):
+        return _error("runner output is not a JSON object")
+    result = _smoke_report(result, elf)
+    # The CLI reserves exit status 1 for an incomplete bounded prefix even
+    # when every requested instruction committed successfully.  That is a
+    # valid smoke result; faults and backend errors still produce status
+    # ``failed`` or ``backend_error`` and remain non-zero.
+    if args.manifest_out is not None:
+        args.manifest_out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    steps = result.get("steps", [])
+    final = steps[-1] if steps else {}
+    final_pc = final.get("next_pc") or final.get("address", 0)
+    if result.get("status") != "passed":
+        print(
+            f"status=failed elf={elf.name}"
+            f" pe_count={result.get('pe_count', args.pe_count)}"
+            f" steps={len(steps)} final_pc=0x{int(final_pc or 0):x}"
+            f" termination={result.get('termination', 'unknown')}"
+            f" fault_code={final.get('fault_code', 'none')}"
+            f" error={final.get('error', 'none')}",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"status={result.get('status', 'unknown')} elf={elf.name}"
+        f" pe_count={result.get('pe_count', args.pe_count)}"
+        f" steps={len(steps)} final_pc=0x{int(final_pc or 0):x}"
+        f" termination={result.get('termination', 'unknown')}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

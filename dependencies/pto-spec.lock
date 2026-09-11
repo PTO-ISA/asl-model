@@ -1,0 +1,11 @@
+{
+  "name": "pto-spec",
+  "repository": "https://github.com/PTO-ISA/pto-spec.git",
+  "commit": "ab6d11c740e13c2d9cddea4af72cd25ccca3e6b2",
+  "artifacts": [
+    "build/pto-spec.asl",
+    "build/decoders.asl",
+    "build/asl-source-order.txt",
+    "scripts/aslref"
+  ]
+}

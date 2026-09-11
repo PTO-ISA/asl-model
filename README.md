@@ -50,6 +50,45 @@ scripts/pto-asl-run \
 
 Run repository checks with `make check`.
 
+## Developer smoke and session runtime
+
+The separately named `asl_model` Python package provides non-release
+bring-up capabilities imported from the standalone runtime line: persistent
+ASLRef sessions, ELF loading, host-backed memory, bounded smoke execution,
+and independent per-PE workers. It does not replace the strict
+`pto_asl_model` runner used by `pto_model_run_elf()` and `pto-closure`.
+
+```bash
+python3 -m pip install -e .
+
+asl-model --pto-spec ../pto-spec elf-run \
+  --backend asl --elf program.elf --model-profile linx-runtime \
+  --max-instructions 1000
+
+scripts/asl-model-elf-smoke \
+  --pto-spec ../pto-spec --expected-machine 0xe9 \
+  build/scalar-add-smoke.elf
+```
+
+Generate that smoke carrier directly from the accepted PTO-SPEC catalog:
+
+```bash
+python3 tools/generate_smoke_elf.py \
+  --pto-spec ../pto-spec build/scalar-add-smoke.elf
+```
+
+Smoke manifests use schema `pto-asl-model-smoke-v1`, declare
+`validation_level=smoke` and `closure_eligible=false`, and explicitly report
+that no model lock, sidecar, or independent golden was provided. A bounded
+prefix may pass its requested smoke scope, but it can never satisfy strict
+closure or release evidence.
+
+Multi-PE smoke uses one worker per PE by default. The single-worker `core`
+mode is incomplete because current PTO ASL does not expose complete per-PE
+context state; it is available only with explicit `--experimental-core` for
+diagnosis and is not promotion evidence. See [ELF smoke runs](docs/smoke.md)
+and [runtime state scope](src/asl_model/runtime/multi_pe_state_scope.md).
+
 ## PTO 0.58.6 compiler/model closure
 
 The repository owns the cross-component AVS layer for PTO 0.58.6. The
