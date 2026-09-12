@@ -88,6 +88,17 @@ mode is incomplete because current PTO ASL does not expose complete per-PE
 context state; it is available only with explicit `--experimental-core` for
 diagnosis and is not promotion evidence. See [ELF smoke runs](docs/smoke.md)
 and [runtime state scope](src/asl_model/runtime/multi_pe_state_scope.md).
+Use `--parallel-pe-steps` to start those workers concurrently and execute
+conflict-free rounds in parallel. Shared-memory conflicts fail over to a clean
+serial rerun rather than changing PE-order behavior.
+
+On the exact `ops-20260911` FP32 four-PE FA prefix, concurrent worker startup
+and transactional PE rounds reduced startup from 46.18 to 14.78 seconds and
+time to the unchanged 325-step `Fault_TileLegality` signature from 393.41 to
+114.38 seconds. The trace SHA-256 remained
+`6887a559d9e33415c1ccc910598a898a13736c6ddc7e1d8907b659ff08a56d5c`.
+This is performance evidence for a known failing prefix, not an FA numerical
+correctness or completion result.
 
 ## PTO 0.58.6 compiler/model closure
 

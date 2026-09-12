@@ -127,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
         "--experimental-core", action="store_true",
         help="allow incomplete one-worker core scope for diagnostics only",
     )
+    parser.add_argument(
+        "--parallel-pe-steps", action="store_true",
+        help="run per-PE rounds concurrently with conflict-safe serial fallback",
+    )
     parser.add_argument("--stack-policy", choices=("explicit", "after-image", "disabled"), default="after-image")
     parser.add_argument("--stack-top", type=lambda value: int(value, 0))
     parser.add_argument("--stack-size", type=lambda value: int(value, 0), default=0x01000000)
@@ -171,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if args.experimental_core:
         command.append("--experimental-core")
+    if args.parallel_pe_steps:
+        command.append("--parallel-pe-steps")
     if args.expected_machine is not None:
         command.extend(("--expected-machine", hex(args.expected_machine)))
     if args.stack_stride is not None:

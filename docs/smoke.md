@@ -14,6 +14,7 @@ scripts/asl-model-elf-smoke \
   --pto-spec ../pto-spec \
   --pe-count 4 \
   --worker-scope per-pe \
+  --parallel-pe-steps \
   --max-instructions 500 \
   path/to/program.elf
 ```
@@ -54,6 +55,12 @@ failure is reported as failed.
 ASL does not expose complete per-PE context state. It requires
 `--experimental-core` and must not be used as conformance or promotion
 evidence.
+
+`--parallel-pe-steps` starts independent per-PE workers concurrently and runs
+each scheduling round through isolated memory overlays. Reads and writes are
+committed in deterministic PE order only when the parallel result is equivalent
+to that order. A read-after-write conflict automatically discards the workers
+and reruns the ELF serially from its initial state.
 
 The generator reads one accepted unconstrained scalar form and its match bits
 from `spec/catalog/scalar-forms.json`. It does not patch a failing production

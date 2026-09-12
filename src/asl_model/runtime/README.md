@@ -70,12 +70,13 @@ explicit `(stack_pointer, stack_size)` pair can add a stack mapping.  The
 bridge rejects overlaps and permission violations and never selects a base
 address implicitly.
 
-The embedded ASL worker exposes a narrow byte protocol.  When ASL invokes
-`HostReadMemoryByte` or `HostWriteMemoryByte`, the worker emits `mem_read` or
-`mem_write`; Python services the request from `HostMemoryBridge` and returns a
-byte/status response.  The same protocol is available through
-`EmbeddedAslWorker.read_memory_byte()` and `.write_memory_byte()` for bring-up
-tests.  A worker without callbacks fails closed when ASL requests host memory.
+The embedded ASL worker keeps a bounded read cache populated with host-validated
+chunks, capped at 256 KiB per worker. A cache miss emits `mem_read_chunk`; writes remain synchronous
+`mem_write` operations. The host adapter still owns mappings, permissions,
+shared-memory generations, and image storage, while ASL owns translation,
+faults, ordering, and instruction semantics. Cross-PE writes invalidate stale
+worker caches before the next step. A worker without callbacks fails closed
+when ASL requests host memory.
 
 ## Snapshot boundary
 
@@ -141,6 +142,11 @@ the existing single-context runner for compatibility; values greater than one
 use the multi-PE loop and default to `per-pe` workers. Automatic ASL-owned
 fetch for multi-PE execution requires `--model-profile linx-runtime`;
 portable-profile diagnostics must provide an explicit instruction width.
+
+`--parallel-pe-steps` is a semantics-preserving performance mode for `per-pe`.
+Each round uses isolated transactional memory views and commits in PE order only
+when no earlier write could affect a later read. Conflicting rounds discard the
+speculative workers and rerun the complete ELF through the serial scheduler.
 
 The machine check is opt-in. Use `--expected-machine 0xe9` for the current PTO
 ELF profile when a mismatched input should be rejected before ASL starts. During

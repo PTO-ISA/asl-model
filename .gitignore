@@ -1,6 +1,7 @@
 /build/
 /build-*/
 /.cache/
+/.omx/
 /.venv/
 *.egg-info/
 *.py[cod]

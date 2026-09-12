@@ -9,8 +9,10 @@ model provides PE-scoped TPC, queues, block state, and faults.
 
 from __future__ import annotations
 
+import concurrent.futures
+import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -20,6 +22,7 @@ from .elf import ElfLoader
 from .host_memory import HostMemoryBridge
 from .config import RuntimeLayout
 from .profile import AslModelProfile
+from .parallel_memory import ParallelMemoryConflict, ParallelMemoryCoordinator
 from .protocol import ElfLoadRequest, InstructionRequest, ProgramImage, ProgramSegment
 
 
@@ -71,23 +74,25 @@ class InstructionExecution:
 
     @property
     def ok(self) -> bool:
-        return self.returncode == 0 and self.status in {"committed", "passed", "executed"}
+        return self.returncode == 0 and self.status in {
+            "committed",
+            "passed",
+            "executed",
+        }
 
 
 class InstructionExecutor(Protocol):
     """Executes one already-fetched instruction for a PE context."""
 
-    def start(self, image: ProgramImage, contexts: tuple[PeContext, ...]) -> None:
-        ...
+    def start(self, image: ProgramImage, contexts: tuple[PeContext, ...]) -> None: ...
 
-    def decode_length(self, context: PeContext, encoding: int) -> int:
-        ...
+    def decode_length(self, context: PeContext, encoding: int) -> int: ...
 
-    def execute(self, context: PeContext, request: InstructionRequest) -> InstructionExecution:
-        ...
+    def execute(
+        self, context: PeContext, request: InstructionRequest
+    ) -> InstructionExecution: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
 
 class UnsupportedPeStateScope(RuntimeError):
@@ -102,8 +107,7 @@ class ControlFlowPolicy(Protocol):
         context: PeContext,
         request: InstructionRequest,
         execution: InstructionExecution,
-    ) -> int:
-        ...
+    ) -> int: ...
 
 
 class SequentialControlFlow:
@@ -123,8 +127,7 @@ class FinisherPolicy(Protocol):
         context: PeContext,
         request: InstructionRequest,
         execution: InstructionExecution,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
 
 class ExecutionFinisher:
@@ -137,7 +140,10 @@ class ExecutionFinisher:
 class CallbackFinisher:
     """Adapt a runtime-specific finisher predicate to the common contract."""
 
-    def __init__(self, callback: Callable[[PeContext, InstructionRequest, InstructionExecution], bool]):
+    def __init__(
+        self,
+        callback: Callable[[PeContext, InstructionRequest, InstructionExecution], bool],
+    ):
         self.callback = callback
 
     def observe(self, context, request, execution) -> bool:
@@ -158,6 +164,7 @@ class MultiPeStep:
     finished: bool = False
     error: str | None = None
     fault_code: int | None = None
+    elapsed_ms: float = 0.0
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -173,6 +180,7 @@ class MultiPeStep:
             "finished": self.finished,
             "error": self.error,
             "fault_code": self.fault_code,
+            "elapsed_ms": self.elapsed_ms,
         }
 
 
@@ -185,6 +193,7 @@ class MultiPeRunResult:
     termination: str = "unknown"
     model_profile: str = "portable"
     runtime_layout: RuntimeLayout | None = None
+    runtime_metrics: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -217,7 +226,8 @@ class MultiPeRunResult:
             "pe_count": len(self.contexts),
             "runtime_layout": (
                 _runtime_layout_dict(self.runtime_layout)
-                if self.runtime_layout is not None else None
+                if self.runtime_layout is not None
+                else None
             ),
             "contexts": [
                 {
@@ -232,6 +242,7 @@ class MultiPeRunResult:
             ],
             "steps": [step.as_dict() for step in self.steps],
             "artifact": dict(self.artifact),
+            "runtime_metrics": dict(self.runtime_metrics),
         }
 
 
@@ -261,6 +272,7 @@ class AslWorkerExecutor:
         red_zone: int = 16,
         worker_scope: str = "per-pe",
         experimental_core: bool = False,
+        parallel_pe_steps: bool = False,
         model_profile: str = "portable",
         cache_root: Path | None = None,
     ):
@@ -274,7 +286,9 @@ class AslWorkerExecutor:
             except FileNotFoundError:
                 # Unit tests may inject a fake image without a PTO checkout;
                 # real ELF runs still construct the policy from the ASL tree.
-                self.completion_policy = AslCompletionPolicy(self.pto_spec_root, enabled=False)
+                self.completion_policy = AslCompletionPolicy(
+                    self.pto_spec_root, enabled=False
+                )
         self.initial_source = initial_source
         self.worker_factory = worker_factory
         if worker_scope not in {"per-pe", "single", "core"}:
@@ -286,6 +300,11 @@ class AslWorkerExecutor:
             )
         self.worker_scope = worker_scope
         self.experimental_core = experimental_core
+        if parallel_pe_steps and worker_scope != "per-pe":
+            raise UnsupportedPeStateScope(
+                "parallel PE steps require worker_scope='per-pe'"
+            )
+        self.parallel_pe_steps = parallel_pe_steps
         self.memory_bridge = memory_bridge or HostMemoryBridge(
             unmapped_policy="zero" if model_profile == "linx-runtime" else "deny"
         )
@@ -300,7 +319,11 @@ class AslWorkerExecutor:
         self.cache_root = cache_root
         self.profile_spec: Path | None = None
         self.workers: dict[int, EmbeddedAslWorker] = {}
+        self._worker_memory_generation: dict[int, int] = {}
         self.artifact: dict[str, str] = {}
+        self.metrics: dict[str, object] = {}
+        self._parallel_memory: ParallelMemoryCoordinator | None = None
+        self._parallel_views = {}
 
     def start(self, image, contexts) -> None:
         # ``single`` is retained as the historical one-context probe. Core is
@@ -313,34 +336,57 @@ class AslWorkerExecutor:
                 "worker_scope='per-pe' for multiple PE contexts"
             )
         try:
-            self.profile_spec = self.model_profile.materialize(self.pto_spec_root, self.cache_root)
+            self.profile_spec = self.model_profile.materialize(
+                self.pto_spec_root, self.cache_root
+            )
         except FileNotFoundError:
             # Test doubles may intentionally use a synthetic root without a
             # generated artifact. Real workers still fail closed in
             # ``_start_worker`` when no profile spec is available.
             self.profile_spec = None
         self.runtime_layout = RuntimeLayout.resolve(
-            image, policy=self.stack_policy, stack_top=self.stack_pointer,
-            stack_size=self.stack_size, stack_gap=self.stack_gap,
-            stack_stride=self.stack_stride, red_zone=self.red_zone,
+            image,
+            policy=self.stack_policy,
+            stack_top=self.stack_pointer,
+            stack_size=self.stack_size,
+            stack_gap=self.stack_gap,
+            stack_stride=self.stack_stride,
+            red_zone=self.red_zone,
             pe_count=len(contexts),
         )
         self.memory_bridge.load_image(image, runtime_layout=self.runtime_layout)
         self.close()
         if self.worker_scope in {"single", "core"}:
-            worker = self._make_worker()
+            worker = self._make_worker(None)
             self._start_worker(worker, self._shared_worker_source(contexts))
             worker.ping()
             select_pe = getattr(worker, "select_pe", None)
             if select_pe is not None:
                 select_pe(0)
             self.workers = {context.pe_id: worker for context in contexts}
+            self._worker_memory_generation = {
+                context.pe_id: self.memory_bridge.generation for context in contexts
+            }
             if worker.identity is not None:
                 self.artifact = worker.identity.as_dict()
             return
-        for context in contexts:
-            source = self.initial_source(context) if callable(self.initial_source) else self.initial_source
-            worker = self._make_worker()
+        workers_by_pe = {
+            context.pe_id: self._make_worker(context.pe_id) for context in contexts
+        }
+        created_workers = list(workers_by_pe.values())
+        if self.profile_spec is not None and contexts:
+            first_worker = workers_by_pe[contexts[0].pe_id]
+            ensure_built = getattr(first_worker, "_ensure_built", None)
+            if callable(ensure_built):
+                first_worker.identity, _ = ensure_built(self.profile_spec)
+
+        def start_context(context: PeContext):
+            source = (
+                self.initial_source(context)
+                if callable(self.initial_source)
+                else self.initial_source
+            )
+            worker = workers_by_pe[context.pe_id]
             worker_source = (
                 "SelectMemoryEventAgent("
                 f"{context.pe_id} as MemoryAgentId);\n"
@@ -358,18 +404,90 @@ class AslWorkerExecutor:
             select_pe = getattr(worker, "select_pe", None)
             if select_pe is not None:
                 select_pe(context.pe_id)
-            self.workers[context.pe_id] = worker
-            if worker.identity is not None and not self.artifact:
-                self.artifact = worker.identity.as_dict()
+            return context.pe_id, worker
 
-    def _make_worker(self):
+        try:
+            parallel_start = (
+                len(contexts) > 1
+                and not callable(self.initial_source)
+                and not self.initial_source.strip()
+            )
+            if parallel_start:
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(contexts), thread_name_prefix="asl-worker-start"
+                ) as pool:
+                    started = list(pool.map(start_context, contexts))
+            else:
+                started = [start_context(context) for context in contexts]
+        except Exception:
+            for worker in created_workers:
+                worker.stop()
+            raise
+        self.workers = dict(started)
+        self._worker_memory_generation = {
+            context.pe_id: self.memory_bridge.generation for context in contexts
+        }
+        for context in contexts:
+            identity = self.workers[context.pe_id].identity
+            if identity is not None:
+                self.artifact = identity.as_dict()
+                break
+
+    def _make_worker(self, pe_id: int | None):
+        def read_byte(address: int) -> int:
+            if self._parallel_memory is not None and pe_id is not None:
+                return self._parallel_views[pe_id].read_byte(address)
+            return self.memory_bridge.read_byte(address)
+
+        def read_chunk(address: int, size: int) -> bytes:
+            if self._parallel_memory is not None and pe_id is not None:
+                return self._parallel_views[pe_id].read_chunk(address, size)
+            return self.memory_bridge.read_chunk(address, size)
+
+        def write_byte(address: int, value: int) -> None:
+            if self._parallel_memory is not None and pe_id is not None:
+                self._parallel_views[pe_id].write_byte(address, value)
+                return
+            self.memory_bridge.write_byte(address, value)
+
         return self.worker_factory(
             self.pto_spec_root,
             timeout_s=self.timeout_s,
             cache_root=self.cache_root,
-            memory_read=self.memory_bridge.read_byte,
-            memory_write=self.memory_bridge.write_byte,
+            memory_read=read_byte,
+            memory_read_chunk=read_chunk,
+            memory_write=write_byte,
         )
+
+    def begin_parallel_round(self, contexts: list[PeContext]) -> None:
+        if not self.parallel_pe_steps:
+            return
+        if self._parallel_memory is not None:
+            raise RuntimeError("parallel memory round is already active")
+        self._parallel_memory = ParallelMemoryCoordinator(self.memory_bridge)
+        self._parallel_views = {
+            context.pe_id: self._parallel_memory.view(context.pe_id)
+            for context in contexts
+        }
+
+    def commit_parallel_round(self) -> None:
+        if self._parallel_memory is None:
+            return
+        try:
+            self._parallel_memory.commit()
+        finally:
+            self._parallel_memory = None
+            self._parallel_views = {}
+
+    def rollback_parallel_round(self) -> None:
+        if self._parallel_memory is None:
+            return
+        try:
+            if not self._parallel_memory.closed:
+                self._parallel_memory.rollback()
+        finally:
+            self._parallel_memory = None
+            self._parallel_views = {}
 
     def _start_worker(self, worker, source: str) -> None:
         if self.profile_spec is None:
@@ -424,6 +542,7 @@ class AslWorkerExecutor:
     def execute(self, context, request) -> InstructionExecution:
         try:
             worker = self.workers[context.pe_id]
+            self._synchronize_worker_memory(context.pe_id, worker)
             if self.worker_scope in {"single", "core"}:
                 select_pe = getattr(worker, "select_pe", None)
                 set_tpc = getattr(worker, "set_tpc", None)
@@ -443,6 +562,9 @@ class AslWorkerExecutor:
                 else False
             )
             fault_code = worker.peek_fault() if status != 0 else None
+            self._worker_memory_generation[context.pe_id] = (
+                self.memory_bridge.generation
+            )
         except Exception as error:  # worker errors are part of the report
             return InstructionExecution("failed", 2, error=str(error))
         execution = InstructionExecution(
@@ -461,6 +583,7 @@ class AslWorkerExecutor:
 
         worker = self.workers[context.pe_id]
         try:
+            self._synchronize_worker_memory(context.pe_id, worker)
             if self.worker_scope in {"single", "core"}:
                 worker.select_pe(context.pe_id)
                 worker.set_tpc(context.pc)
@@ -480,6 +603,9 @@ class AslWorkerExecutor:
                 if step.status == 0 and hasattr(worker, "peek_terminal_pending")
                 else False
             )
+            self._worker_memory_generation[context.pe_id] = (
+                self.memory_bridge.generation
+            )
             return request, InstructionExecution(
                 status="committed" if step.status == 0 else "rejected",
                 returncode=0 if step.status == 0 else 1,
@@ -487,6 +613,7 @@ class AslWorkerExecutor:
                 finished=finished,
                 fault_code=step.fault_code if step.status != 0 else None,
             )
+
         except Exception as error:
             return (
                 InstructionRequest(
@@ -501,14 +628,34 @@ class AslWorkerExecutor:
                 InstructionExecution("failed", 2, error=str(error)),
             )
 
+    def _synchronize_worker_memory(self, pe_id: int, worker) -> None:
+        generation = self.memory_bridge.generation
+        if self._worker_memory_generation.get(pe_id) != generation:
+            worker.clear_memory_cache()
+            self._worker_memory_generation[pe_id] = generation
+
     def close(self) -> None:
+        self.rollback_parallel_round()
+        protocol = {
+            "chunk_reads": 0,
+            "chunk_read_bytes": 0,
+            "byte_reads": 0,
+            "byte_writes": 0,
+        }
         stopped: set[int] = set()
         for worker in self.workers.values():
             if id(worker) in stopped:
                 continue
+            stats = getattr(worker, "memory_protocol_stats", None)
+            if callable(stats):
+                for name, value in stats().items():
+                    protocol[name] = protocol.get(name, 0) + value
             worker.stop()
             stopped.add(id(worker))
         self.workers.clear()
+        self._worker_memory_generation.clear()
+        self.metrics.clear()
+        self.metrics["memory_protocol"] = protocol
 
 
 class AslMultiPeElfRunner:
@@ -530,6 +677,7 @@ class AslMultiPeElfRunner:
         red_zone: int = 16,
         worker_scope: str = "per-pe",
         experimental_core: bool = False,
+        parallel_pe_steps: bool = False,
         model_profile: str = "portable",
         cache_root: Path | None = None,
         expected_machine: int | None = None,
@@ -542,7 +690,9 @@ class AslMultiPeElfRunner:
             try:
                 self.completion_policy = AslCompletionPolicy(self.pto_spec_root)
             except FileNotFoundError:
-                self.completion_policy = AslCompletionPolicy(self.pto_spec_root, enabled=False)
+                self.completion_policy = AslCompletionPolicy(
+                    self.pto_spec_root, enabled=False
+                )
         self.model_base = model_base
         self.memory_bridge = memory_bridge
         self.stack_pointer = stack_pointer
@@ -560,6 +710,11 @@ class AslMultiPeElfRunner:
             )
         self.worker_scope = worker_scope
         self.experimental_core = experimental_core
+        if parallel_pe_steps and worker_scope != "per-pe":
+            raise UnsupportedPeStateScope(
+                "parallel PE steps require worker_scope='per-pe'"
+            )
+        self.parallel_pe_steps = parallel_pe_steps
         self.model_profile = AslModelProfile.select(model_profile)
         self.cache_root = cache_root
         self.expected_machine = expected_machine
@@ -628,11 +783,17 @@ class AslMultiPeElfRunner:
             )
         if self._segment_for_pc(image, image.entry_point) is None:
             raise ValueError("ELF entry point is not inside a PT_LOAD segment")
-        contexts = tuple(PeContext(index, index, image.entry_point) for index in range(pe_count))
+        contexts = tuple(
+            PeContext(index, index, image.entry_point) for index in range(pe_count)
+        )
         runtime_layout = RuntimeLayout.resolve(
-            image, policy=self.stack_policy, stack_top=self.stack_pointer,
-            stack_size=self.stack_size, stack_gap=self.stack_gap,
-            stack_stride=self.stack_stride, red_zone=self.red_zone,
+            image,
+            policy=self.stack_policy,
+            stack_top=self.stack_pointer,
+            stack_size=self.stack_size,
+            stack_gap=self.stack_gap,
+            stack_stride=self.stack_stride,
+            red_zone=self.red_zone,
             pe_count=pe_count,
         )
         executor = (
@@ -651,120 +812,286 @@ class AslMultiPeElfRunner:
                 red_zone=self.red_zone,
                 worker_scope=self.worker_scope,
                 experimental_core=self.experimental_core,
+                parallel_pe_steps=self.parallel_pe_steps,
                 model_profile=self.model_profile.name,
                 cache_root=self.cache_root,
             )
         )
+        if self.parallel_pe_steps and pe_count > 1:
+            required = (
+                "step_next",
+                "begin_parallel_round",
+                "commit_parallel_round",
+                "rollback_parallel_round",
+            )
+            missing = [
+                name for name in required if not callable(getattr(executor, name, None))
+            ]
+            if missing:
+                raise UnsupportedPeStateScope(
+                    "parallel PE executor is missing capability: " + ", ".join(missing)
+                )
         flow = control_flow or SequentialControlFlow()
         finish = finisher or ExecutionFinisher()
         completion = self.completion_policy
         steps: list[MultiPeStep] = []
         termination = "max_instructions"
+        parallel_fallback = False
+        runtime_metrics: dict[str, object] = {}
+        parallel_metrics: dict[str, object] = {
+            "attempted": False,
+            "rounds": 0,
+            "commits": 0,
+            "fallback": False,
+        }
+        parallel_attempt_started: float | None = None
+
+        def execute_context(context: PeContext):
+            step_started = time.perf_counter()
+            step_next = getattr(executor, "step_next", None)
+            if length_bits is None and callable(step_next):
+                request, execution = step_next(context)
+                width = len(request.encoding) * 8
+                return (
+                    request,
+                    execution,
+                    width,
+                    (time.perf_counter() - step_started) * 1000.0,
+                )
+            segment = self._segment_for_pc(image, context.pc)
+            if segment is None:
+                return "PC is not inside an executable PT_LOAD segment"
+            offset = context.pc - segment.address
+            if offset + 2 > len(segment.data):
+                return "instruction fetch is truncated"
+            encoded = int.from_bytes(
+                segment.data[offset : offset + 8].ljust(8, b"\0"), "little"
+            )
+            width = length_bits or executor.decode_length(context, encoded)
+            if width not in {16, 32, 48, 64}:
+                return "instruction width could not be determined"
+            if offset + width // 8 > len(segment.data):
+                return "instruction fetch is truncated"
+            request = InstructionRequest(
+                pc=context.pc,
+                encoding=segment.data[offset : offset + width // 8],
+                pe_id=context.pe_id,
+                thread_id=context.thread_id,
+            )
+            execution = executor.execute(context, request)
+            return (
+                request,
+                execution,
+                width,
+                (time.perf_counter() - step_started) * 1000.0,
+            )
+
+        def record_outcome(context: PeContext, outcome) -> bool:
+            request, execution, width, elapsed_ms = outcome
+            terminal = execution.ok and completion.is_terminal(
+                int.from_bytes(request.encoding, "little"), width
+            )
+            if terminal and not execution.finished:
+                execution = InstructionExecution(
+                    status=execution.status,
+                    returncode=execution.returncode,
+                    next_pc=execution.next_pc,
+                    finished=True,
+                    error=execution.error,
+                    fault_code=execution.fault_code,
+                )
+            next_pc = (
+                flow.next_pc(context, request, execution) if execution.ok else None
+            )
+            if execution.ok:
+                context.pc = next_pc if next_pc is not None else context.pc
+                context.instruction_count += 1
+            finished = execution.ok and finish.observe(context, request, execution)
+            if finished:
+                context.active = False
+                context.finished = True
+            elif not execution.ok:
+                context.active = False
+            steps.append(
+                MultiPeStep(
+                    index=len(steps),
+                    pe_id=context.pe_id,
+                    thread_id=context.thread_id,
+                    address=request.pc,
+                    instruction=int.from_bytes(request.encoding, "little"),
+                    length_bits=width,
+                    status=execution.status,
+                    returncode=execution.returncode,
+                    next_pc=next_pc,
+                    finished=finished,
+                    error=execution.error,
+                    fault_code=execution.fault_code,
+                    elapsed_ms=elapsed_ms,
+                )
+            )
+            return not execution.ok
+
+        step_pool = None
         try:
             executor.start(image, contexts)
+            if self.parallel_pe_steps and pe_count > 1:
+                step_pool = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=pe_count, thread_name_prefix="asl-pe-step"
+                )
             while len(steps) < max_instructions:
-                progressed = False
                 begin_round = getattr(executor, "begin_round", None)
                 if begin_round is not None:
                     begin_round()
-                for context in self._schedule_contexts(contexts):
-                    if not context.active:
-                        continue
-                    progressed = True
-                    step_next = getattr(executor, "step_next", None)
-                    if length_bits is None and callable(step_next):
-                        request, execution = step_next(context)
-                        width = len(request.encoding) * 8
-                    else:
-                        segment = self._segment_for_pc(image, context.pc)
-                        if segment is None:
-                            return self._failed_fetch_result(
-                                image, contexts, steps, executor, runtime_layout,
-                                context, "PC is not inside an executable PT_LOAD segment",
-                            )
-                        offset = context.pc - segment.address
-                        if offset + 2 > len(segment.data):
-                            return self._failed_fetch_result(
-                                image, contexts, steps, executor, runtime_layout,
-                                context, "instruction fetch is truncated",
-                            )
-                        encoded = int.from_bytes(
-                            segment.data[offset : offset + 8].ljust(8, b"\0"),
-                            "little",
-                        )
-                        width = length_bits or executor.decode_length(context, encoded)
-                        if width not in {16, 32, 48, 64}:
-                            return self._failed_fetch_result(
-                                image, contexts, steps, executor, runtime_layout,
-                                context, "instruction width could not be determined",
-                            )
-                        if offset + width // 8 > len(segment.data):
-                            return self._failed_fetch_result(
-                                image, contexts, steps, executor, runtime_layout,
-                                context, "instruction fetch is truncated",
-                            )
-                        raw = segment.data[offset : offset + width // 8]
-                        request = InstructionRequest(
-                            pc=context.pc,
-                            encoding=raw,
-                            pe_id=context.pe_id,
-                            thread_id=context.thread_id,
-                        )
-                        execution = executor.execute(context, request)
-                    terminal = execution.ok and completion.is_terminal(
-                        int.from_bytes(request.encoding, "little"), width
+                scheduled = self._schedule_contexts(contexts)
+                scheduled = scheduled[: max_instructions - len(steps)]
+                if not scheduled:
+                    termination = "all_finished"
+                    break
+                can_parallel = bool(
+                    step_pool is not None
+                    and len(scheduled) > 1
+                    and length_bits is None
+                    and callable(getattr(executor, "step_next", None))
+                )
+                if can_parallel:
+                    if parallel_attempt_started is None:
+                        parallel_attempt_started = time.perf_counter()
+                    parallel_metrics["attempted"] = True
+                    parallel_metrics["rounds"] = int(parallel_metrics["rounds"]) + 1
+                    executor.begin_parallel_round(scheduled)
+                    outcomes = list(step_pool.map(execute_context, scheduled))
+                    failure_index = next(
+                        (
+                            index
+                            for index, outcome in enumerate(outcomes)
+                            if isinstance(outcome, str) or not outcome[1].ok
+                        ),
+                        None,
                     )
-                    # Always execute through the semantic backend first,
-                    # including ACRC.  The completion catalog is only a host
-                    # observation/ABI hint; it must never replace the ASL
-                    # transition.  Generic executors that do not expose a
-                    # terminal marker still finish after a successful
-                    # catalog-recognized instruction.
-                    if terminal and execution.ok and not execution.finished:
-                        execution = InstructionExecution(
-                            status=execution.status,
-                            returncode=execution.returncode,
-                            next_pc=execution.next_pc,
-                            finished=True,
-                            error=execution.error,
-                        )
-                    next_pc = flow.next_pc(context, request, execution) if execution.ok else None
-                    if execution.ok:
-                        context.pc = next_pc if next_pc is not None else context.pc
-                        context.instruction_count += 1
-                    finished = execution.ok and finish.observe(context, request, execution)
-                    if finished:
-                        context.active = False
-                        context.finished = True
-                    elif not execution.ok:
-                        context.active = False
-                    steps.append(
-                        MultiPeStep(
-                            index=len(steps), pe_id=context.pe_id, thread_id=context.thread_id,
-                            address=request.pc,
-                            instruction=int.from_bytes(request.encoding, "little"),
-                            length_bits=width, status=execution.status,
-                            returncode=execution.returncode, next_pc=next_pc,
-                            finished=finished, error=execution.error,
-                            fault_code=execution.fault_code,
-                        )
-                    )
-                    if not execution.ok:
+                    if failure_index is not None:
+                        executor.rollback_parallel_round()
+                        if failure_index != 0:
+                            parallel_metrics.update(
+                                {
+                                    "fallback": True,
+                                    "fallback_reason": "later_pe_step_failed",
+                                    "failure_index": failure_index,
+                                    "failure_pe_id": scheduled[failure_index].pe_id,
+                                }
+                            )
+                            parallel_fallback = True
+                            break
+                        outcome = outcomes[0]
+                        if isinstance(outcome, str):
+                            return self._failed_fetch_result(
+                                image,
+                                contexts,
+                                steps,
+                                executor,
+                                runtime_layout,
+                                scheduled[0],
+                                outcome,
+                            )
+                        record_outcome(scheduled[0], outcome)
                         termination = "step_failed"
                         return MultiPeRunResult(
-                            image, contexts, tuple(steps), getattr(executor, "artifact", {}),
-                            termination, self.model_profile.name, runtime_layout,
+                            image,
+                            contexts,
+                            tuple(steps),
+                            getattr(executor, "artifact", {}),
+                            termination,
+                            self.model_profile.name,
+                            runtime_layout,
+                            runtime_metrics,
                         )
-                    if len(steps) >= max_instructions:
+                    try:
+                        executor.commit_parallel_round()
+                        parallel_metrics["commits"] = (
+                            int(parallel_metrics["commits"]) + 1
+                        )
+                    except ParallelMemoryConflict as error:
+                        executor.rollback_parallel_round()
+                        parallel_metrics.update(
+                            {
+                                "fallback": True,
+                                "fallback_reason": "memory_conflict",
+                                "writer_pe_id": error.writer_pe_id,
+                                "reader_pe_id": error.reader_pe_id,
+                                "addresses": list(error.addresses),
+                            }
+                        )
+                        parallel_fallback = True
                         break
-                if not progressed or all(not context.active for context in contexts):
+                    for context, outcome in zip(scheduled, outcomes):
+                        record_outcome(context, outcome)
+                else:
+                    for context in scheduled:
+                        outcome = execute_context(context)
+                        if isinstance(outcome, str):
+                            return self._failed_fetch_result(
+                                image,
+                                contexts,
+                                steps,
+                                executor,
+                                runtime_layout,
+                                context,
+                                outcome,
+                            )
+                        if record_outcome(context, outcome):
+                            termination = "step_failed"
+                            return MultiPeRunResult(
+                                image,
+                                contexts,
+                                tuple(steps),
+                                getattr(executor, "artifact", {}),
+                                termination,
+                                self.model_profile.name,
+                                runtime_layout,
+                                runtime_metrics,
+                            )
+                if all(not context.active for context in contexts):
                     termination = "all_finished"
                     break
         finally:
+            if step_pool is not None:
+                step_pool.shutdown(wait=True)
             executor.close()
+            runtime_metrics.update(getattr(executor, "metrics", {}))
+            if parallel_attempt_started is not None:
+                parallel_metrics["discarded_elapsed_ms"] = (
+                    (time.perf_counter() - parallel_attempt_started) * 1000.0
+                    if parallel_fallback
+                    else 0.0
+                )
+            runtime_metrics["parallel"] = parallel_metrics
+        if parallel_fallback:
+            original = self.parallel_pe_steps
+            self.parallel_pe_steps = False
+            try:
+                serial_result = self.run_image(
+                    image,
+                    pe_count=pe_count,
+                    max_instructions=max_instructions,
+                    length_bits=length_bits,
+                    executor_factory=executor_factory,
+                    control_flow=control_flow,
+                    finisher=finisher,
+                    initial_source=initial_source,
+                )
+                metrics = dict(serial_result.runtime_metrics)
+                metrics["parallel"] = parallel_metrics
+                return replace(serial_result, runtime_metrics=metrics)
+            finally:
+                self.parallel_pe_steps = original
         return MultiPeRunResult(
-            image, contexts, tuple(steps), getattr(executor, "artifact", {}),
-            termination, self.model_profile.name, runtime_layout,
+            image,
+            contexts,
+            tuple(steps),
+            getattr(executor, "artifact", {}),
+            termination,
+            self.model_profile.name,
+            runtime_layout,
+            runtime_metrics,
         )
 
     @staticmethod
@@ -777,7 +1104,8 @@ class AslMultiPeElfRunner:
     def _segment_for_pc(image: ProgramImage, pc: int) -> ProgramSegment | None:
         return next(
             (
-                segment for segment in image.segments
+                segment
+                for segment in image.segments
                 if "x" in segment.permissions
                 and segment.address <= pc < segment.address + len(segment.data)
             ),
@@ -795,17 +1123,19 @@ class AslMultiPeElfRunner:
         error: str,
     ) -> MultiPeRunResult:
         context.active = False
-        steps.append(MultiPeStep(
-            index=len(steps),
-            pe_id=context.pe_id,
-            thread_id=context.thread_id,
-            address=context.pc,
-            instruction=0,
-            length_bits=0,
-            status="fetch_failed",
-            returncode=1,
-            error=error,
-        ))
+        steps.append(
+            MultiPeStep(
+                index=len(steps),
+                pe_id=context.pe_id,
+                thread_id=context.thread_id,
+                address=context.pc,
+                instruction=0,
+                length_bits=0,
+                status="fetch_failed",
+                returncode=1,
+                error=error,
+            )
+        )
         return MultiPeRunResult(
             image,
             contexts,
@@ -814,13 +1144,22 @@ class AslMultiPeElfRunner:
             "step_failed",
             self.model_profile.name,
             runtime_layout,
+            getattr(executor, "metrics", {}),
         )
 
 
 __all__ = [
-    "AslMultiPeElfRunner", "AslWorkerExecutor", "CallbackFinisher",
-    "ControlFlowPolicy", "ExecutionFinisher", "FinisherPolicy",
-    "InstructionExecution", "InstructionExecutor", "MultiPeRunResult",
-    "MultiPeStep", "PeContext", "SequentialControlFlow",
+    "AslMultiPeElfRunner",
+    "AslWorkerExecutor",
+    "CallbackFinisher",
+    "ControlFlowPolicy",
+    "ExecutionFinisher",
+    "FinisherPolicy",
+    "InstructionExecution",
+    "InstructionExecutor",
+    "MultiPeRunResult",
+    "MultiPeStep",
+    "PeContext",
+    "SequentialControlFlow",
     "UnsupportedPeStateScope",
 ]
