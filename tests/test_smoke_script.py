@@ -60,6 +60,7 @@ class ElfSmokeScriptTest(unittest.TestCase):
             ) as run_mock:
                 status = smoke.main([
                     str(elf), "--pto-spec", str(spec),
+                    "--parallel-pe-steps",
                     "--manifest-out", str(manifest),
                 ])
 
@@ -75,6 +76,7 @@ class ElfSmokeScriptTest(unittest.TestCase):
             command = run_mock.call_args.args[0]
             self.assertIn("--expected-machine", command)
             self.assertEqual(command[command.index("--expected-machine") + 1], "0xe9")
+            self.assertIn("--parallel-pe-steps", command)
             with self.assertRaisesRegex(ValueError, "semantic payload"):
                 validate_semantic_payload(result)
 

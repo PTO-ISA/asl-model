@@ -4,7 +4,6 @@ import io
 import hashlib
 import json
 import pathlib
-import struct
 import sys
 import tempfile
 import time

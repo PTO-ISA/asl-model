@@ -193,6 +193,7 @@ module Protocol = struct
         };
         22
     | [ "step_auto" ] -> 23
+    | [ "clear_mem_cache" ] -> 24
     | [ "quit" ] -> 0
     | _ -> 255
 
@@ -263,11 +264,13 @@ module Protocol = struct
     | line -> line
     | exception End_of_file -> invalid_arg "memory host closed the protocol"
 
-  let memory_address_argument = function
+  let memory_address_value = function
     | [ Native.NV_Literal (AST.L_BitVector address) ] ->
-        Z.to_string (Bitvector.to_z_unsigned address)
-    | [ Native.NV_Literal (AST.L_Int address) ] -> Z.to_string address
+        Bitvector.to_z_unsigned address
+    | [ Native.NV_Literal (AST.L_Int address) ] -> address
     | _ -> invalid_arg "memory address must be a bitvector"
+
+  let memory_address_argument args = Z.to_string (memory_address_value args)
 
   let memory_value_argument = function
     | [ Native.NV_Literal (AST.L_BitVector value) ] ->
@@ -284,6 +287,58 @@ module Protocol = struct
 
   let memory_status_response line =
     if line <> "mem_status 0" then invalid_arg "invalid memory write response"
+end
+
+module MemoryCache = struct
+  let bytes : (Z.t, int) Hashtbl.t = Hashtbl.create 65536
+  let max_cached_bytes = 262144
+
+  let clear () = Hashtbl.clear bytes
+
+  let hex_digit = function
+    | '0' .. '9' as value -> Char.code value - Char.code '0'
+    | 'a' .. 'f' as value -> Char.code value - Char.code 'a' + 10
+    | 'A' .. 'F' as value -> Char.code value - Char.code 'A' + 10
+    | _ -> invalid_arg "invalid memory chunk hex digit"
+
+  let load_response line =
+    match Protocol.split_words line with
+    | [ "mem_chunk"; base; payload ] ->
+        let base =
+          try Z.of_string base
+          with _ -> invalid_arg "invalid memory chunk base"
+        in
+        let length = String.length payload in
+        if length = 0 || length mod 2 <> 0 then
+          invalid_arg "invalid memory chunk payload";
+        let incoming_bytes = length / 2 in
+        if incoming_bytes > max_cached_bytes then
+          invalid_arg "memory chunk exceeds cache capacity";
+        if Hashtbl.length bytes + incoming_bytes > max_cached_bytes then
+          clear ();
+        for index = 0 to incoming_bytes - 1 do
+          let high = hex_digit payload.[index * 2] in
+          let low = hex_digit payload.[index * 2 + 1] in
+          Hashtbl.replace bytes (Z.add base (Z.of_int index)) (high * 16 + low)
+        done
+    | _ -> invalid_arg "invalid memory chunk response"
+
+  let read address =
+    match Hashtbl.find_opt bytes address with
+    | Some value -> value
+    | None ->
+        load_response
+          (Protocol.memory_request
+             (Printf.sprintf "mem_read_chunk %s 4096" (Z.to_string address)));
+        (match Hashtbl.find_opt bytes address with
+        | Some value -> value
+        | None -> invalid_arg "memory chunk omitted requested address")
+
+  let write address value =
+    if not (Hashtbl.mem bytes address) &&
+       Hashtbl.length bytes >= max_cached_bytes then
+      clear ();
+    Hashtbl.replace bytes address value
 end
 
 let primitive_decl ?returns ?(side_effecting = false) name args =
@@ -356,9 +411,9 @@ module HostBackend = struct
     | _ -> invalid_arg "HostWriteStepResult takes five arguments"
 
   let host_read_memory_byte _parameters args =
-    let address = Protocol.memory_address_argument args in
-    [ Protocol.memory_value_response
-        (Protocol.memory_request ("mem_read " ^ address)) ]
+    let value = MemoryCache.read (Protocol.memory_address_value args) in
+    [ Native.NV_Literal
+        (AST.L_BitVector (Bitvector.of_int_sized 8 value)) ]
 
   let host_read_memory_address _parameters args =
     if args <> [] then invalid_arg "HostReadMemoryAddress takes no arguments";
@@ -376,13 +431,20 @@ module HostBackend = struct
     in
     match args with
     | [ address; value ] ->
-        let address = Z.to_string (as_z address) in
+        let address = as_z address in
         let value = Z.to_int (as_z value) in
         if value < 0 || value > 255 then invalid_arg "memory value is not a byte";
         Protocol.memory_status_response
-          (Protocol.memory_request (Printf.sprintf "mem_write %s %d" address value));
+          (Protocol.memory_request
+             (Printf.sprintf "mem_write %s %d" (Z.to_string address) value));
+        MemoryCache.write address value;
         []
     | _ -> invalid_arg "HostWriteMemoryByte takes two bitvector arguments"
+
+  let host_clear_memory_cache _parameters args =
+    if args <> [] then invalid_arg "HostClearMemoryCache takes no arguments";
+    MemoryCache.clear ();
+    []
 
   (* Hosted-profile access permission hooks.  They are only reached when the
      generated ASL enables PTO_MODEL_HOST_MEMORY, in which case the host memory
@@ -452,6 +514,9 @@ module HostBackend = struct
         [ ("address", bits_ty 64); ("size_bytes", integer);
           ("write", boolean) ]
     in
+    let clear_memory_cache =
+      primitive_decl ~side_effecting:true "HostClearMemoryCache" []
+    in
     [ (command, host_read_command);
       (instruction, host_read_instruction);
       (length, host_read_length);
@@ -463,7 +528,8 @@ module HostBackend = struct
         (memory_write, host_write_memory_byte); (memory_address, host_read_memory_address);
         (memory_value, host_read_memory_value) ]
     @ [ (instruction_access, host_instruction_access_permitted);
-        (data_access, host_data_access_permitted) ]
+        (data_access, host_data_access_permitted);
+        (clear_memory_cache, host_clear_memory_cache) ]
     @ Native.DeterministicBackend.primitives
 end
 
@@ -638,6 +704,9 @@ begin
             if result == PTOInstruction_Executed then status = 0; end;
             HostWriteStepResult(status, length_bits, FaultValue(),
                 UInt(ReadTPC()), instruction);
+        elsif command == 24 then
+            HostClearMemoryCache();
+            HostWriteStatus(0);
         else
             HostWriteStatus(2);
         end;

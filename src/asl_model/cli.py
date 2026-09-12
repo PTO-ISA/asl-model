@@ -78,6 +78,12 @@ def main() -> int:
         action="store_true",
         help="allow incomplete one-worker core scope for diagnostics only",
     )
+    parser.add_argument(
+        "--parallel-pe-steps",
+        action="store_true",
+        help=("execute per-PE rounds concurrently with transactional shared "
+              "memory and automatic serial fallback on conflicts"),
+    )
     parser.add_argument("--completion-policy", choices=("direct-boot", "none"), default="direct-boot", help="host completion policy for elf-run")
     parser.add_argument("--case", help="case ID for the run command")
     parser.add_argument("--output", type=Path, help="write a batch report to this JSON path")
@@ -155,6 +161,7 @@ def main() -> int:
                     model_base=args.model_base,
                     worker_scope=args.worker_scope,
                     experimental_core=args.experimental_core,
+                    parallel_pe_steps=args.parallel_pe_steps,
                     model_profile=args.model_profile,
                     cache_root=args.cache_root,
                     stack_pointer=args.stack_top,

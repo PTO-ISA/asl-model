@@ -29,6 +29,35 @@ The worker is an asl-model-owned executable linked against the exact pinned
 ASLRef `asllib`; it does not patch the ASLRef parser, typechecker, interpreter,
 or standard library.
 
+## Current bounded optimization
+
+Before the cross-run snapshot daemon is promoted, the developer runtime uses
+two semantics-preserving optimizations for `per-pe` smoke runs:
+
+- independent ASLRef workers parse and initialize concurrently;
+- each scheduling round executes against isolated host-memory overlays, then
+  commits writes in deterministic PE order only when no earlier write could
+  affect a later read. A conflict discards the speculative workers and reruns
+  the complete ELF serially.
+
+Worker memory reads are populated from host-validated chunks and invalidated by
+the shared-memory generation after writes. Translation, access checks, faults,
+decode, Tile semantics, and instruction execution remain in PTO ASL.
+
+On the measured Darwin host, the frozen `ops-20260911` FP32 four-PE FA prefix
+improved as follows while preserving the exact 325-step trace and final fault:
+
+| Measurement | Baseline | Optimized |
+| --- | ---: | ---: |
+| Four-PE startup and four scalar steps | 46.18 s | 14.78 s |
+| FA time to `Fault_TileLegality` at `0x11432` | 393.41 s | 114.38 s |
+
+The optimized trace SHA-256 is
+`6887a559d9e33415c1ccc910598a898a13736c6ddc7e1d8907b659ff08a56d5c`.
+This benchmark stops at a known architecture/model gap and is not a complete FA
+or independent-golden result. The snapshot lifecycle below remains the route
+for amortizing initialization across separate ELF runs.
+
 ```text
 parse and typecheck the specialized PTO specification
   -> initialize the interpreter environment

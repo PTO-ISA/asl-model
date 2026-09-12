@@ -184,6 +184,7 @@ class AslElfRunner:
             timeout_s=self.timeout_s,
             cache_root=self.cache_root,
             memory_read=memory.read_byte,
+            memory_read_chunk=memory.read_chunk,
             memory_write=memory.write_byte,
         )
         try:

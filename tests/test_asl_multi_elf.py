@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 
 from asl_model.runtime.multi_elf import (
@@ -57,6 +59,9 @@ class ScopedFakeWorker:
     def set_tpc(self, value):
         self.calls.append(("set_tpc", value))
 
+    def clear_memory_cache(self):
+        self.calls.append(("clear_memory_cache",))
+
     def decode_length(self, _encoding):
         return 16
 
@@ -89,6 +94,71 @@ class FailingAutoWorker(ScopedFakeWorker):
         raise RuntimeError("synthetic host failure")
 
 
+class BarrierWorker(ScopedFakeWorker):
+    def __init__(self, barrier, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.barrier = barrier
+
+    def start(self, source):
+        self.barrier.wait(timeout=1.0)
+        super().start(source)
+
+
+class ParallelFakeExecutor:
+    artifact = {"spec": "test"}
+    metrics = {}
+
+    def __init__(self, *, conflict=False, fail_first=False):
+        self.conflict = conflict
+        self.fail_first = fail_first
+        self.barrier = threading.Barrier(2)
+        self.parallel_round = False
+        self.closed = False
+
+    def start(self, _image, _contexts):
+        pass
+
+    def begin_parallel_round(self, _contexts):
+        self.parallel_round = True
+
+    def commit_parallel_round(self):
+        if self.conflict:
+            from asl_model.runtime.parallel_memory import ParallelMemoryConflict
+
+            raise ParallelMemoryConflict("synthetic conflict")
+        self.parallel_round = False
+
+    def rollback_parallel_round(self):
+        self.parallel_round = False
+
+    def step_next(self, context):
+        if self.parallel_round:
+            self.barrier.wait(timeout=1.0)
+        request = InstructionRequest(
+            pc=context.pc,
+            encoding=b"\x01\x00",
+            pe_id=context.pe_id,
+            thread_id=context.thread_id,
+        )
+        if self.fail_first and context.pe_id == 0:
+            return request, InstructionExecution("rejected", 1, fault_code=11)
+        return request, InstructionExecution("committed", 0, next_pc=context.pc + 2)
+
+    def close(self):
+        self.closed = True
+
+
+class IncompleteParallelExecutor(FakeExecutor):
+    def step_next(self, context):
+        request = InstructionRequest(
+            pc=context.pc,
+            encoding=b"\x01\x00",
+            pe_id=context.pe_id,
+            thread_id=context.thread_id,
+        )
+        return request, InstructionExecution("committed", 0, next_pc=context.pc + 2)
+
+
 class MultiPeElfRunnerTest(unittest.TestCase):
     def setUp(self):
         self.image = ProgramImage(
@@ -103,11 +173,15 @@ class MultiPeElfRunnerTest(unittest.TestCase):
             pe_count=2,
             max_instructions=4,
             executor_factory=lambda: executor,
-            finisher=CallbackFinisher(lambda context, request, execution: context.instruction_count >= 1),
+            finisher=CallbackFinisher(
+                lambda context, request, execution: context.instruction_count >= 1
+            ),
         )
         self.assertTrue(result.ok)
         self.assertEqual(result.termination, "all_finished")
-        self.assertEqual([(step.pe_id, step.index) for step in result.steps], [(0, 0), (1, 1)])
+        self.assertEqual(
+            [(step.pe_id, step.index) for step in result.steps], [(0, 0), (1, 1)]
+        )
         self.assertTrue(all(context.finished for context in result.contexts))
         self.assertTrue(executor.closed)
         layout = result.as_dict()["runtime_layout"]
@@ -250,11 +324,15 @@ class MultiPeElfRunnerTest(unittest.TestCase):
             executor.begin_round()
             first = executor.execute(
                 contexts[0],
-                InstructionRequest(pc=0x1000, encoding=b"\x01\x00", pe_id=0, thread_id=0),
+                InstructionRequest(
+                    pc=0x1000, encoding=b"\x01\x00", pe_id=0, thread_id=0
+                ),
             )
             second = executor.execute(
                 contexts[1],
-                InstructionRequest(pc=0x1000, encoding=b"\x01\x00", pe_id=1, thread_id=1),
+                InstructionRequest(
+                    pc=0x1000, encoding=b"\x01\x00", pe_id=1, thread_id=1
+                ),
             )
             self.assertTrue(first.ok)
             self.assertTrue(second.ok)
@@ -291,10 +369,153 @@ class MultiPeElfRunnerTest(unittest.TestCase):
             self.assertIn(f"WriteGPR({frame_sp},", workers[0].calls[0][1])
             self.assertIn("0x7ff0", workers[0].calls[0][1])
             self.assertIn("0x8ff0", workers[1].calls[0][1])
-            self.assertEqual(executor.memory_bridge.stack_pointer_for(0), 0x7ff0)
-            self.assertEqual(executor.memory_bridge.stack_pointer_for(1), 0x8ff0)
+            self.assertEqual(executor.memory_bridge.stack_pointer_for(0), 0x7FF0)
+            self.assertEqual(executor.memory_bridge.stack_pointer_for(1), 0x8FF0)
         finally:
             executor.close()
+
+    def test_per_pe_workers_start_concurrently(self):
+        barrier = threading.Barrier(2)
+        workers = []
+
+        def make_worker(*args, **kwargs):
+            worker = BarrierWorker(barrier, *args, **kwargs)
+            workers.append(worker)
+            return worker
+
+        executor = AslWorkerExecutor("/unused", worker_factory=make_worker)
+        contexts = (PeContext(0, 0, 0x1000), PeContext(1, 1, 0x1000))
+        executor.start(self.image, contexts)
+        try:
+            self.assertEqual(set(executor.workers), {0, 1})
+            self.assertEqual(len(workers), 2)
+        finally:
+            executor.close()
+
+    def test_user_initial_source_keeps_deterministic_start_order(self):
+        state = {"active": 0, "overlap": False}
+        lock = threading.Lock()
+
+        class GuardWorker(ScopedFakeWorker):
+            def start(self, source):
+                with lock:
+                    state["active"] += 1
+                    state["overlap"] |= state["active"] > 1
+                time.sleep(0.02)
+                super().start(source)
+                with lock:
+                    state["active"] -= 1
+
+        executor = AslWorkerExecutor(
+            "/unused",
+            initial_source="WriteGPR(0, Zeros{PTO_XLEN});",
+            worker_factory=lambda *_args, **_kwargs: GuardWorker(),
+        )
+        contexts = (PeContext(0, 0, 0x1000), PeContext(1, 1, 0x1000))
+        executor.start(self.image, contexts)
+        try:
+            self.assertFalse(state["overlap"])
+        finally:
+            executor.close()
+
+    def test_shared_memory_write_invalidates_other_worker_cache(self):
+        workers = []
+
+        def make_worker(*_args, **_kwargs):
+            worker = ScopedFakeWorker()
+            workers.append(worker)
+            return worker
+
+        image = ProgramImage(
+            entry_point=0x1000,
+            segments=(ProgramSegment(0x1000, b"\x01\x00", 4, "rwx"),),
+        )
+        executor = AslWorkerExecutor("/unused", worker_factory=make_worker)
+        contexts = (PeContext(0, 0, 0x1000), PeContext(1, 1, 0x1000))
+        executor.start(image, contexts)
+        try:
+            executor.memory_bridge.write_byte(0x1002, 7)
+            executor.execute(
+                contexts[1],
+                InstructionRequest(
+                    pc=0x1000, encoding=b"\x01\x00", pe_id=1, thread_id=1
+                ),
+            )
+        finally:
+            executor.close()
+
+        self.assertIn(("clear_memory_cache",), workers[1].calls)
+
+    def test_parallel_round_preserves_deterministic_trace_order(self):
+        executor = ParallelFakeExecutor()
+        result = AslMultiPeElfRunner(
+            "/unused", model_profile="linx-runtime", parallel_pe_steps=True
+        ).run_image(
+            self.image,
+            pe_count=2,
+            max_instructions=2,
+            executor_factory=lambda: executor,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual([step.pe_id for step in result.steps], [0, 1])
+        self.assertTrue(executor.closed)
+        self.assertEqual(result.runtime_metrics["parallel"]["rounds"], 1)
+        self.assertFalse(result.runtime_metrics["parallel"]["fallback"])
+
+    def test_parallel_executor_requires_complete_transaction_capability(self):
+        runner = AslMultiPeElfRunner(
+            "/unused", model_profile="linx-runtime", parallel_pe_steps=True
+        )
+        with self.assertRaisesRegex(UnsupportedPeStateScope, "begin_parallel_round"):
+            runner.run_image(
+                self.image,
+                pe_count=2,
+                max_instructions=2,
+                executor_factory=IncompleteParallelExecutor,
+            )
+
+    def test_parallel_conflict_restarts_with_serial_scheduler(self):
+        created = []
+
+        def factory():
+            executor = ParallelFakeExecutor(conflict=not created)
+            created.append(executor)
+            return executor
+
+        result = AslMultiPeElfRunner(
+            "/unused", model_profile="linx-runtime", parallel_pe_steps=True
+        ).run_image(
+            self.image,
+            pe_count=2,
+            max_instructions=2,
+            executor_factory=factory,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(created), 2)
+        self.assertTrue(all(executor.closed for executor in created))
+        self.assertEqual([step.pe_id for step in result.steps], [0, 1])
+        parallel = result.runtime_metrics["parallel"]
+        self.assertTrue(parallel["fallback"])
+        self.assertEqual(parallel["fallback_reason"], "memory_conflict")
+        self.assertGreaterEqual(parallel["discarded_elapsed_ms"], 0)
+
+    def test_first_parallel_failure_matches_serial_stop_order(self):
+        executor = ParallelFakeExecutor(fail_first=True)
+        result = AslMultiPeElfRunner(
+            "/unused", model_profile="linx-runtime", parallel_pe_steps=True
+        ).run_image(
+            self.image,
+            pe_count=2,
+            max_instructions=2,
+            executor_factory=lambda: executor,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(len(result.steps), 1)
+        self.assertEqual(result.steps[0].pe_id, 0)
+        self.assertEqual(result.steps[0].fault_code, 11)
 
 
 if __name__ == "__main__":

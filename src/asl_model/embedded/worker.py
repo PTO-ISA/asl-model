@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -17,7 +18,7 @@ from typing import Any, Callable
 from ..paths import cache_root as resolve_cache_root, runtime_environment
 
 
-WORKER_BUILD_SCHEMA = "pto-asl-embedded-worker-build-v2"
+WORKER_BUILD_SCHEMA = "pto-asl-embedded-worker-build-v3"
 
 
 class EmbeddedWorkerError(RuntimeError):
@@ -75,6 +76,7 @@ class EmbeddedAslWorker:
         timeout_s: float = 120.0,
         cache_root: Path | None = None,
         memory_read: Callable[[int], int] | None = None,
+        memory_read_chunk: Callable[[int, int], bytes] | None = None,
         memory_write: Callable[[int, int], None] | None = None,
     ):
         self.pto_spec_root = Path(pto_spec_root).resolve()
@@ -95,7 +97,14 @@ class EmbeddedAslWorker:
         self._lock = threading.RLock()
         self.identity: WorkerIdentity | None = None
         self._memory_read = memory_read
+        self._memory_read_chunk = memory_read_chunk
         self._memory_write = memory_write
+        self._memory_protocol_stats = {
+            "chunk_reads": 0,
+            "chunk_read_bytes": 0,
+            "byte_reads": 0,
+            "byte_writes": 0,
+        }
 
     @classmethod
     def build(cls, pto_spec_root: Path, **kwargs: Any) -> "EmbeddedAslWorker":
@@ -111,14 +120,23 @@ class EmbeddedAslWorker:
                         "worker is already running with a different initial source"
                     )
                 return
-            selected_spec = Path(spec_path or self.pto_spec_root / "build" / "pto-spec.asl").resolve()
+            selected_spec = Path(
+                spec_path or self.pto_spec_root / "build" / "pto-spec.asl"
+            ).resolve()
             identity, executable = self._ensure_built(selected_spec)
-            command = [str(executable), str(selected_spec)]
+            worker_arguments = [str(executable), str(selected_spec)]
             if initial_source.strip():
                 self._runtime_dir = Path(tempfile.mkdtemp(prefix="pto-asl-worker-"))
                 initial_path = self._runtime_dir / "initial-state.asl"
                 initial_path.write_text(initial_source, encoding="utf-8")
-                command.append(str(initial_path))
+                worker_arguments.append(str(initial_path))
+            command = [
+                "/bin/sh",
+                "-c",
+                'stack_limit=$(ulimit -H -s); ulimit -s "$stack_limit"; exec "$@"',
+                "pto-asl-worker",
+                *worker_arguments,
+            ]
             process = subprocess.Popen(
                 command,
                 cwd=self.pto_spec_root,
@@ -129,7 +147,6 @@ class EmbeddedAslWorker:
                 text=True,
                 bufsize=1,
                 start_new_session=True,
-                preexec_fn=_set_unlimited_stack,
             )
             assert process.stdin is not None and process.stdout is not None
             assert process.stderr is not None
@@ -162,30 +179,80 @@ class EmbeddedAslWorker:
                 line = self._readline(process.stdout)
                 if line is None:
                     raise EmbeddedWorkerError(self._failure("worker closed stdout"))
+                if line.startswith("mem_read_chunk "):
+                    words = line.split()
+                    if len(words) != 3:
+                        raise EmbeddedWorkerError(
+                            f"invalid ASL memory chunk request: {line}"
+                        )
+                    try:
+                        address, size = int(words[1], 0), int(words[2], 0)
+                    except ValueError as error:
+                        raise EmbeddedWorkerError(
+                            f"invalid ASL memory chunk request: {line}"
+                        ) from error
+                    if not 0 < size <= 4096:
+                        raise EmbeddedWorkerError(
+                            f"invalid ASL memory chunk size: {size}"
+                        )
+                    if self._memory_read_chunk is not None:
+                        payload = bytes(self._memory_read_chunk(address, size))
+                    elif self._memory_read is not None:
+                        payload = bytes(
+                            self._memory_read(address + offset)
+                            for offset in range(size)
+                        )
+                    else:
+                        raise EmbeddedWorkerError(
+                            "ASL requested memory but no host memory bridge is attached"
+                        )
+                    if not payload or len(payload) > size:
+                        raise EmbeddedWorkerError(
+                            "host memory bridge returned an invalid chunk"
+                        )
+                    self._memory_protocol_stats["chunk_reads"] += 1
+                    self._memory_protocol_stats["chunk_read_bytes"] += len(payload)
+                    process.stdin.write(f"mem_chunk {address} {payload.hex()}\n")
+                    process.stdin.flush()
+                    continue
                 if line.startswith("mem_read "):
                     if self._memory_read is None:
-                        raise EmbeddedWorkerError("ASL requested memory but no host memory bridge is attached")
+                        raise EmbeddedWorkerError(
+                            "ASL requested memory but no host memory bridge is attached"
+                        )
                     try:
                         address = int(line.split(" ", 1)[1], 0)
                         value = int(self._memory_read(address))
                     except (ValueError, TypeError, IndexError) as error:
-                        raise EmbeddedWorkerError(f"invalid ASL memory read request: {line}") from error
+                        raise EmbeddedWorkerError(
+                            f"invalid ASL memory read request: {line}"
+                        ) from error
                     if not 0 <= value <= 0xFF:
-                        raise EmbeddedWorkerError(f"host memory bridge returned non-byte value: {value}")
+                        raise EmbeddedWorkerError(
+                            f"host memory bridge returned non-byte value: {value}"
+                        )
+                    self._memory_protocol_stats["byte_reads"] += 1
                     process.stdin.write(f"mem_value {value}\n")
                     process.stdin.flush()
                     continue
                 if line.startswith("mem_write "):
                     if self._memory_write is None:
-                        raise EmbeddedWorkerError("ASL requested memory write but no host memory bridge is attached")
+                        raise EmbeddedWorkerError(
+                            "ASL requested memory write but no host memory bridge is attached"
+                        )
                     words = line.split()
                     if len(words) != 3:
-                        raise EmbeddedWorkerError(f"invalid ASL memory write request: {line}")
+                        raise EmbeddedWorkerError(
+                            f"invalid ASL memory write request: {line}"
+                        )
                     try:
                         address, value = int(words[1], 0), int(words[2], 0)
                         self._memory_write(address, value)
                     except (ValueError, TypeError, IndexError) as error:
-                        raise EmbeddedWorkerError(f"invalid ASL memory write request: {line}") from error
+                        raise EmbeddedWorkerError(
+                            f"invalid ASL memory write request: {line}"
+                        ) from error
+                    self._memory_protocol_stats["byte_writes"] += 1
                     process.stdin.write("mem_status 0\n")
                     process.stdin.flush()
                     continue
@@ -194,6 +261,13 @@ class EmbeddedAslWorker:
     def ping(self) -> None:
         if self.request("ping") != "status 0":
             raise EmbeddedWorkerError("unexpected ping response")
+
+    def clear_memory_cache(self) -> None:
+        if self.request("clear_mem_cache") != "status 0":
+            raise EmbeddedWorkerError("embedded ASL memory cache clear failed")
+
+    def memory_protocol_stats(self) -> dict[str, int]:
+        return dict(self._memory_protocol_stats)
 
     def step(self, instruction: int, length_bits: int) -> int:
         if not 0 <= instruction < (1 << 64):
@@ -226,7 +300,9 @@ class EmbeddedAslWorker:
                 int(value, 10) for value in fields[1:]
             )
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid step_auto response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid step_auto response: {response}"
+            ) from error
         if status not in {0, 1}:
             raise EmbeddedWorkerError(f"invalid step_auto status: {status}")
         if length_bits not in {0, 16, 32, 48, 64}:
@@ -247,9 +323,13 @@ class EmbeddedAslWorker:
         try:
             length_bits = int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid decode_length response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid decode_length response: {response}"
+            ) from error
         if length_bits not in {0, 16, 32, 48, 64}:
-            raise EmbeddedWorkerError(f"invalid decoded instruction length: {length_bits}")
+            raise EmbeddedWorkerError(
+                f"invalid decoded instruction length: {length_bits}"
+            )
         return length_bits
 
     def peek_tpc(self) -> int:
@@ -262,7 +342,9 @@ class EmbeddedAslWorker:
         try:
             return int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid peek_tpc response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid peek_tpc response: {response}"
+            ) from error
 
     def read_memory_byte(self, address: int) -> int:
         """Read one guest byte through the ASL worker host bridge."""
@@ -276,7 +358,9 @@ class EmbeddedAslWorker:
         try:
             byte = int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid read_mem response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid read_mem response: {response}"
+            ) from error
         if not 0 <= byte <= 0xFF:
             raise EmbeddedWorkerError(f"read_mem returned non-byte value: {byte}")
         return byte
@@ -300,7 +384,9 @@ class EmbeddedAslWorker:
         try:
             return int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid peek_fault response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid peek_fault response: {response}"
+            ) from error
 
     def select_pe(self, pe_id: int) -> None:
         """Select the ASL memory-agent/PE context used by scalar accessors."""
@@ -325,7 +411,9 @@ class EmbeddedAslWorker:
         try:
             return int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid peek_pe_gpr response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid peek_pe_gpr response: {response}"
+            ) from error
 
     def peek_selected_pe(self) -> int:
         """Return the ASL memory-agent currently selected for the VM."""
@@ -337,7 +425,9 @@ class EmbeddedAslWorker:
         try:
             return int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid peek_pe response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid peek_pe response: {response}"
+            ) from error
 
     def peek_terminal_pending(self) -> bool:
         """Observe ASL's post-ACRC terminal marker without changing state."""
@@ -355,9 +445,7 @@ class EmbeddedAslWorker:
                 f"invalid peek_terminal_pending response: {response}"
             ) from error
         if marker not in {0, 1}:
-            raise EmbeddedWorkerError(
-                f"invalid terminal marker: {marker}"
-            )
+            raise EmbeddedWorkerError(f"invalid terminal marker: {marker}")
         return bool(marker)
 
     def _peek_flag(self, command: str) -> bool:
@@ -368,7 +456,9 @@ class EmbeddedAslWorker:
         try:
             marker = int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid {command} response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid {command} response: {response}"
+            ) from error
         if marker not in {0, 1}:
             raise EmbeddedWorkerError(f"invalid {command} marker: {marker}")
         return bool(marker)
@@ -393,7 +483,9 @@ class EmbeddedAslWorker:
         try:
             return int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid peek_acr response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid peek_acr response: {response}"
+            ) from error
 
     def peek_control_request(self) -> int:
         """Read the ASL-owned request operand published by ACRC/control ops."""
@@ -417,9 +509,7 @@ class EmbeddedAslWorker:
         response = self.request("peek_barg_bpcn")
         prefix, _, value = response.partition(" ")
         if prefix != "value":
-            raise EmbeddedWorkerError(
-                f"unexpected peek_barg_bpcn response: {response}"
-            )
+            raise EmbeddedWorkerError(f"unexpected peek_barg_bpcn response: {response}")
         try:
             return int(value, 10)
         except ValueError as error:
@@ -436,7 +526,9 @@ class EmbeddedAslWorker:
         try:
             return int(value, 10)
         except ValueError as error:
-            raise EmbeddedWorkerError(f"invalid peek_barg_word response: {response}") from error
+            raise EmbeddedWorkerError(
+                f"invalid peek_barg_word response: {response}"
+            ) from error
 
     def peek_shared_flags(self, shared_id: int) -> int:
         response = self.request(f"peek_shared {shared_id}")
@@ -500,7 +592,9 @@ class EmbeddedAslWorker:
         spec = Path(spec or self.pto_spec_root / "build" / "pto-spec.asl").resolve()
         pin = self.pto_spec_root / ".aslref-version"
         aslref_root = Path(
-            os.environ.get("PTO_ASLREF_ROOT", str(self.pto_spec_root / ".cache" / "herdtools7"))
+            os.environ.get(
+                "PTO_ASLREF_ROOT", str(self.pto_spec_root / ".cache" / "herdtools7")
+            )
         ).resolve()
         build = aslref_root / "_build" / "default" / "asllib"
         cmxa = build / "asllib.cmxa"
@@ -537,62 +631,131 @@ class EmbeddedAslWorker:
         spec_sha = _sha256(spec)
         asllib_sha = _sha256(cmxa)
         compiler_version = self._run_tool(compiler, "-version").strip()
-        cache_key = _digest([
-            WORKER_BUILD_SCHEMA,
-            aslref_commit,
-            asllib_sha,
-            wrapper_sha,
-            spec_sha,
-            compiler_version,
-        ])
+        cache_key = _digest(
+            [
+                WORKER_BUILD_SCHEMA,
+                aslref_commit,
+                asllib_sha,
+                wrapper_sha,
+                spec_sha,
+                compiler_version,
+            ]
+        )
         target = self.cache_root / cache_key
         executable = target / "aslref-worker"
         metadata = target / "identity.json"
-        if executable.is_file() and os.access(executable, os.X_OK) and metadata.is_file():
-            try:
-                identity = WorkerIdentity(**json.loads(metadata.read_text(encoding="utf-8")))
-                if identity.cache_key == cache_key and identity.worker_sha256 == _sha256(executable):
-                    return identity, executable
-            except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                pass
-        target.mkdir(parents=True, exist_ok=True)
-        build_dir = Path(tempfile.mkdtemp(prefix="build-", dir=target))
-        try:
-            source = build_dir / "Worker.ml"
-            shutil.copy2(wrapper, source)
-            self._compile(
-                compiler, build_dir, source, executable, cmxa, byte_cmi, native_cmi
-            )
-            identity = WorkerIdentity(
-                cache_key=cache_key,
-                aslref_commit=aslref_commit,
-                asllib_sha256=asllib_sha,
-                worker_sha256=_sha256(executable),
-                spec_sha256=spec_sha,
-                wrapper_sha256=wrapper_sha,
-            )
-            metadata.write_text(json.dumps(identity.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        identity = self._cached_identity(executable, metadata, cache_key)
+        if identity is not None:
             return identity, executable
-        finally:
-            shutil.rmtree(build_dir, ignore_errors=True)
+        target.mkdir(parents=True, exist_ok=True)
+        lock_path = target / "build.lock"
+        with lock_path.open("a+b") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            identity = self._cached_identity(executable, metadata, cache_key)
+            if identity is not None:
+                return identity, executable
+            build_dir = Path(tempfile.mkdtemp(prefix="build-", dir=target))
+            try:
+                source = build_dir / "Worker.ml"
+                built_executable = build_dir / "aslref-worker"
+                built_metadata = build_dir / "identity.json"
+                shutil.copy2(wrapper, source)
+                self._compile(
+                    compiler,
+                    build_dir,
+                    source,
+                    built_executable,
+                    cmxa,
+                    byte_cmi,
+                    native_cmi,
+                )
+                worker_sha256 = _sha256(built_executable)
+                identity = WorkerIdentity(
+                    cache_key=cache_key,
+                    aslref_commit=aslref_commit,
+                    asllib_sha256=asllib_sha,
+                    worker_sha256=worker_sha256,
+                    spec_sha256=spec_sha,
+                    wrapper_sha256=wrapper_sha,
+                )
+                built_metadata.write_text(
+                    json.dumps(identity.as_dict(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                os.replace(built_executable, executable)
+                os.replace(built_metadata, metadata)
+                published = self._cached_identity(executable, metadata, cache_key)
+                if published is None:
+                    raise EmbeddedWorkerError(
+                        "published embedded worker identity does not match executable"
+                    )
+                return published, executable
+            finally:
+                shutil.rmtree(build_dir, ignore_errors=True)
 
-    def _compile(self, compiler: Path, cwd: Path, source: Path, executable: Path, cmxa: Path, byte_cmi: Path, native_cmi: Path) -> None:
+    @staticmethod
+    def _cached_identity(
+        executable: Path, metadata: Path, cache_key: str
+    ) -> WorkerIdentity | None:
+        if not (
+            executable.is_file()
+            and os.access(executable, os.X_OK)
+            and metadata.is_file()
+        ):
+            return None
+        try:
+            identity = WorkerIdentity(
+                **json.loads(metadata.read_text(encoding="utf-8"))
+            )
+            if identity.cache_key == cache_key and identity.worker_sha256 == _sha256(
+                executable
+            ):
+                return identity
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+        return None
+
+    def _compile(
+        self,
+        compiler: Path,
+        cwd: Path,
+        source: Path,
+        executable: Path,
+        cmxa: Path,
+        byte_cmi: Path,
+        native_cmi: Path,
+    ) -> None:
         ocaml_root = compiler.parent.parent
         zarith = ocaml_root / "lib" / "zarith"
         menhir = ocaml_root / "lib" / "menhirLib"
         dependencies = (zarith / "zarith.cmxa", menhir / "menhirLib.cmxa")
         if not all(path.is_file() for path in dependencies):
-            raise EmbeddedWorkerError("OCaml zarith/menhirLib native libraries are missing")
+            raise EmbeddedWorkerError(
+                "OCaml zarith/menhirLib native libraries are missing"
+            )
         command = [str(compiler), "-ccopt", "-L" + str(self._gmp_library_dir())]
         if sys.platform == "darwin":
             command.extend(("-cclib", "-Wl,-stack_size,0x20000000"))
         for path in (byte_cmi, native_cmi, zarith, menhir):
             command.extend(("-I", str(path)))
-        command.extend(("-o", str(executable), *(str(path) for path in dependencies), str(cmxa), str(source)))
-        completed = subprocess.run(command, cwd=cwd, env=self._environment(), capture_output=True, text=True)
+        command.extend(
+            (
+                "-o",
+                str(executable),
+                *(str(path) for path in dependencies),
+                str(cmxa),
+                str(source),
+            )
+        )
+        completed = subprocess.run(
+            command, cwd=cwd, env=self._environment(), capture_output=True, text=True
+        )
         if completed.returncode != 0 or not executable.is_file():
             detail = (completed.stderr or completed.stdout).strip()
-            raise EmbeddedWorkerError("failed to build embedded ASLRef worker" + (f": {detail[-4000:]}" if detail else ""))
+            raise EmbeddedWorkerError(
+                "failed to build embedded ASLRef worker"
+                + (f": {detail[-4000:]}" if detail else "")
+            )
         executable.chmod(0o755)
 
     @staticmethod
@@ -601,7 +764,10 @@ class EmbeddedAslWorker:
         found = shutil.which(name)
         if found:
             candidates.append(Path(found))
-        candidates += [Path.home() / ".opam-pto" / "pto-ocaml" / "bin" / name, Path.home() / ".opam" / "default" / "bin" / name]
+        candidates += [
+            Path.home() / ".opam-pto" / "pto-ocaml" / "bin" / name,
+            Path.home() / ".opam" / "default" / "bin" / name,
+        ]
         for candidate in candidates:
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 return candidate.resolve()
@@ -609,9 +775,16 @@ class EmbeddedAslWorker:
 
     @staticmethod
     def _run_tool(tool: Path, *args: str) -> str:
-        completed = subprocess.run([str(tool), *args], env=EmbeddedAslWorker._environment(), capture_output=True, text=True)
+        completed = subprocess.run(
+            [str(tool), *args],
+            env=EmbeddedAslWorker._environment(),
+            capture_output=True,
+            text=True,
+        )
         if completed.returncode:
-            raise EmbeddedWorkerError(f"failed to run {tool}: {completed.stderr.strip()}")
+            raise EmbeddedWorkerError(
+                f"failed to run {tool}: {completed.stderr.strip()}"
+            )
         return completed.stdout
 
     @staticmethod
@@ -629,7 +802,11 @@ class EmbeddedAslWorker:
 
     @staticmethod
     def _gmp_library_dir() -> Path:
-        for path in (Path.home() / ".local" / "lib", Path("/usr/lib/x86_64-linux-gnu"), Path("/lib/x86_64-linux-gnu")):
+        for path in (
+            Path.home() / ".local" / "lib",
+            Path("/usr/lib/x86_64-linux-gnu"),
+            Path("/lib/x86_64-linux-gnu"),
+        ):
             if (path / "libgmp.so").is_file() or (path / "libgmp.a").is_file():
                 return path
         return Path("/usr/lib/x86_64-linux-gnu")
@@ -637,7 +814,11 @@ class EmbeddedAslWorker:
     @staticmethod
     def _environment() -> dict[str, str]:
         environment = runtime_environment()
-        environment["LD_LIBRARY_PATH"] = str(Path.home() / ".local" / "lib") + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
+        environment["LD_LIBRARY_PATH"] = (
+            str(Path.home() / ".local" / "lib")
+            + os.pathsep
+            + environment.get("LD_LIBRARY_PATH", "")
+        )
         return environment
 
     def _readline(self, stream: Any) -> str | None:
@@ -647,7 +828,9 @@ class EmbeddedAslWorker:
             if not selector.select(self.timeout_s):
                 if self._process is not None:
                     self._terminate(self._process)
-                raise EmbeddedWorkerError(f"embedded ASL worker timed out after {self.timeout_s:g}s")
+                raise EmbeddedWorkerError(
+                    f"embedded ASL worker timed out after {self.timeout_s:g}s"
+                )
             line = stream.readline()
             return line.rstrip("\r\n") if line else None
         finally:
@@ -697,20 +880,3 @@ def _digest(parts: list[str]) -> str:
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
     return digest.hexdigest()
-
-
-def _set_unlimited_stack() -> None:
-    """Match the ASLRef launcher and allow large generated ASL call stacks."""
-
-    try:
-        import resource
-
-        _soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
-        if hard != resource.RLIM_INFINITY:
-            resource.setrlimit(resource.RLIMIT_STACK, (hard, hard))
-        else:
-            resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, hard))
-    except (ImportError, OSError, ValueError):
-        # Non-POSIX hosts may not expose resource limits.  The worker remains
-        # usable there when the generated model fits the platform default.
-        pass

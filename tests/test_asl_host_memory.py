@@ -46,6 +46,48 @@ class HostMemoryBridgeTest(unittest.TestCase):
         with self.assertRaises(MemoryAccessError):
             bridge.write_byte(0x1000, 7)
 
+    def test_chunk_read_is_clipped_to_one_readable_region(self):
+        image = ProgramImage(
+            entry_point=0x1000,
+            segments=(ProgramSegment(0x1000, b"abcdef", 6, "rx"),),
+        )
+        bridge = HostMemoryBridge()
+        bridge.load_image(image)
+
+        self.assertEqual(bridge.read_chunk(0x1002, 4096), b"cdef")
+        with self.assertRaises(MemoryAccessError):
+            bridge.read_chunk(0x1006, 1)
+
+    def test_memory_generation_changes_after_write(self):
+        image = ProgramImage(
+            entry_point=0x1000,
+            segments=(ProgramSegment(0x1000, b"\0", 4, "rw"),),
+        )
+        bridge = HostMemoryBridge()
+        bridge.load_image(image)
+        self.assertEqual(bridge.generation, 0)
+
+        bridge.write_byte(0x1001, 7)
+
+        self.assertEqual(bridge.generation, 1)
+        self.assertEqual(bridge.read_chunk(0x1000, 4), b"\0\x07\0\0")
+
+    def test_memory_generation_changes_after_restore(self):
+        image = ProgramImage(
+            entry_point=0x1000,
+            segments=(ProgramSegment(0x1000, b"A", 2, "rw"),),
+        )
+        bridge = HostMemoryBridge()
+        bridge.load_image(image)
+        snapshot = bridge.snapshot()
+        bridge.write_byte(0x1000, ord("B"))
+        generation = bridge.generation
+
+        bridge.restore(snapshot)
+
+        self.assertGreater(bridge.generation, generation)
+        self.assertEqual(bridge.read_byte(0x1000), ord("A"))
+
     def test_zero_policy_maps_page_hole_around_unaligned_load(self):
         image = ProgramImage(
             entry_point=0x13DC8,

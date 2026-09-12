@@ -18,11 +18,9 @@ from .config import RuntimeLayout
 
 
 class MemoryWorker(Protocol):
-    def read_memory_byte(self, address: int) -> int:
-        ...
+    def read_memory_byte(self, address: int) -> int: ...
 
-    def write_memory_byte(self, address: int, value: int) -> None:
-        ...
+    def write_memory_byte(self, address: int, value: int) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -45,8 +43,14 @@ class StackImage:
 class HostMemoryBridge:
     """Host-side memory contract exposed to ASL worker adapters."""
 
-    def __init__(self, memory: GuestMemory | None = None, worker: MemoryWorker | None = None,
-                 *, unmapped_policy: str = "deny", page_size: int = 4096):
+    def __init__(
+        self,
+        memory: GuestMemory | None = None,
+        worker: MemoryWorker | None = None,
+        *,
+        unmapped_policy: str = "deny",
+        page_size: int = 4096,
+    ):
         if unmapped_policy not in {"deny", "zero"}:
             raise ValueError("unmapped_policy must be 'deny' or 'zero'")
         if page_size <= 0 or page_size & (page_size - 1):
@@ -59,6 +63,7 @@ class HostMemoryBridge:
         self.stack: StackImage | None = None
         self.stacks: tuple[StackImage, ...] = ()
         self._red_zone = 0
+        self.generation = 0
 
     def load_image(
         self,
@@ -84,6 +89,7 @@ class HostMemoryBridge:
         if stack_count <= 0:
             raise ValueError("stack_count must be positive")
         self.memory = GuestMemory()
+        self.generation = 0
         for segment in sorted(image.segments, key=lambda item: item.address):
             self.memory.map_region(
                 segment.address,
@@ -96,11 +102,14 @@ class HostMemoryBridge:
         self.stacks = ()
         if runtime_layout is None:
             count = stack_count if pe_count is None else pe_count
-            effective_stack_pointer = stack_pointer if stack_pointer is not None else image.stack_pointer
+            effective_stack_pointer = (
+                stack_pointer if stack_pointer is not None else image.stack_pointer
+            )
             if stack_size == 0 and stack_policy == "explicit":
                 stack_policy = "disabled"
             runtime_layout = RuntimeLayout.resolve(
-                image, policy=stack_policy,
+                image,
+                policy=stack_policy,
                 stack_top=effective_stack_pointer,
                 stack_size=stack_size,
                 stack_gap=stack_gap,
@@ -172,6 +181,31 @@ class HostMemoryBridge:
                 )
         return value
 
+    def read_chunk(self, address: int, size: int) -> bytes:
+        """Read forward within one mapped readable region."""
+
+        if size <= 0:
+            raise ValueError("memory chunk size must be positive")
+        if self.worker is not None:
+            return bytes(self.read_byte(address + offset) for offset in range(size))
+        try:
+            self.memory.read(address, 1)
+        except MemoryAccessError:
+            if self.unmapped_policy != "zero":
+                raise
+            self._map_zero_page(address)
+        region = next(
+            (
+                item
+                for item in self.memory.regions
+                if item.base <= address < item.end and "r" in item.permissions
+            ),
+            None,
+        )
+        if region is None:
+            raise MemoryAccessError("r", address, size, "permission denied")
+        return self.memory.read(address, min(size, region.end - address))
+
     def write_byte(self, address: int, value: int) -> None:
         if not 0 <= value <= 0xFF:
             raise ValueError("memory value must fit in one byte")
@@ -182,6 +216,7 @@ class HostMemoryBridge:
                 raise
             self._map_zero_page(address)
             self.memory.write(address, bytes((value,)))
+        self.generation += 1
         if self.worker is not None:
             self.worker.write_memory_byte(address, value)
 
@@ -190,6 +225,7 @@ class HostMemoryBridge:
 
     def restore(self, snapshot: MemorySnapshot) -> None:
         self.memory.restore(snapshot)
+        self.generation += 1
 
     def _map_zero_page(self, address: int) -> None:
         """Map only the unmapped holes in the page containing ``address``.
@@ -212,8 +248,9 @@ class HostMemoryBridge:
         # and preserving the existing mapping is the important contract.
         for region in regions:
             if region.base <= address < region.end:
-                raise MemoryAccessError("rw", address, 1,
-                                        "address overlaps an existing mapping")
+                raise MemoryAccessError(
+                    "rw", address, 1, "address overlaps an existing mapping"
+                )
 
         cursor = base
         for region in regions:

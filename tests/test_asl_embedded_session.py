@@ -191,6 +191,17 @@ class EmbeddedAslSessionUnitTest(unittest.TestCase):
         self.assertGreaterEqual(source.count("AST.L_Bool true"), 2)
         self.assertIn("DeterminePTOInstructionLength(instruction[15:0])", source)
         self.assertNotIn("InferInstructionLength", source)
+        self.assertIn("max_cached_bytes = 262144", source)
+        self.assertIn("not (Hashtbl.mem bytes address)", source)
+        self.assertIn("Hashtbl.length bytes >= max_cached_bytes", source)
+
+    def test_worker_build_cache_uses_a_cross_process_lock_and_revalidates(self):
+        source = (
+            Path(__file__).parents[1] / "src" / "asl_model" / "embedded" / "worker.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('lock_path = target / "build.lock"', source)
+        self.assertIn("fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)", source)
+        self.assertGreaterEqual(source.count("self._cached_identity("), 3)
 
 
 class EmbeddedAslRefIntegrationTest(unittest.TestCase):
