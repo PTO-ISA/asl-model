@@ -15,6 +15,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parent
 ELF_MACHINE = 0xE9
+# A pass must be backed by a terminal event, never by a bounded prefix.
+TERMINAL_TERMINATIONS = frozenset({"asl_terminal", "all_finished"})
 
 
 def _elf_machine(path: Path) -> int | None:
@@ -198,32 +200,34 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(result, dict):
         return _error("runner output is not a JSON object")
     result = _smoke_report(result, elf)
-    # The CLI reserves exit status 1 for an incomplete bounded prefix even
-    # when every requested instruction committed successfully.  That is a
-    # valid smoke result; faults and backend errors still produce status
-    # ``failed`` or ``backend_error`` and remain non-zero.
     if args.manifest_out is not None:
         args.manifest_out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     steps = result.get("steps", [])
     final = steps[-1] if steps else {}
     final_pc = final.get("next_pc") or final.get("address", 0)
-    if result.get("status") != "passed":
+    status = result.get("status", "unknown")
+    termination = result.get("termination", "unknown")
+    # A pass must be backed by a terminal event.  A run that stopped at the
+    # instruction bound is diagnostic progress: it is reported as
+    # ``unfinished`` and stays non-zero so a bounded prefix can never be read
+    # as a successful run.
+    passed = status == "passed" and termination in TERMINAL_TERMINATIONS
+    reported = status if passed or status != "passed" else "unfinished"
+    line = (
+        f"status={reported} elf={elf.name}"
+        f" pe_count={result.get('pe_count', args.pe_count)}"
+        f" steps={len(steps)} final_pc=0x{int(final_pc or 0):x}"
+        f" termination={termination}"
+    )
+    if not passed:
         print(
-            f"status=failed elf={elf.name}"
-            f" pe_count={result.get('pe_count', args.pe_count)}"
-            f" steps={len(steps)} final_pc=0x{int(final_pc or 0):x}"
-            f" termination={result.get('termination', 'unknown')}"
+            f"{line}"
             f" fault_code={final.get('fault_code', 'none')}"
             f" error={final.get('error', 'none')}",
             file=sys.stderr,
         )
         return 1
-    print(
-        f"status={result.get('status', 'unknown')} elf={elf.name}"
-        f" pe_count={result.get('pe_count', args.pe_count)}"
-        f" steps={len(steps)} final_pc=0x{int(final_pc or 0):x}"
-        f" termination={result.get('termination', 'unknown')}"
-    )
+    print(line)
     return 0
 
 

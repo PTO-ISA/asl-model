@@ -47,9 +47,13 @@ scripts/asl-model-elf-smoke \
   build/scalar-add-smoke.elf
 ```
 
-`max-instructions` means exactly that: reaching the bound with all steps
-committed is a successful bounded smoke run, while an ASL fault or host-memory
-failure is reported as failed.
+`max-instructions` means exactly that: the run stops after that many steps. A
+run that stops at the bound has not finished, so it is reported as
+`status=unfinished` and is not a pass, even when every requested step
+committed. Only an observed terminal event is reported as `status=passed`;
+ASL faults, host-memory failures and backend errors are reported as failed.
+The manifest keeps the distinction explicit: `termination` names why the run
+stopped and `complete` is true only for a terminal event.
 
 `--timeout-s` bounds how long the host waits for one worker protocol line, so a
 step that computes for longer than the budget without emitting one is reported

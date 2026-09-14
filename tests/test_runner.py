@@ -124,6 +124,60 @@ class RunnerTests(unittest.TestCase):
             run_mock.call_args.args[0].memory_backend, "host-sparse"
         )
 
+    def test_stop_pc_has_no_default(self) -> None:
+        with mock.patch(
+            "pto_asl_model.runner.run", return_value={"status": "passed"}
+        ) as run_mock:
+            status = main([
+                "--asl-spec", "spec.asl",
+                "--aslref", "aslref",
+                "--elf", "case.elf",
+                "--lock", "pto-lock.json",
+                "--quiet",
+            ])
+        self.assertEqual(status, 0)
+        self.assertIsNone(run_mock.call_args.args[0].stop_pc)
+
+    def test_unfinished_manifest_is_not_a_pass(self) -> None:
+        with mock.patch(
+            "pto_asl_model.runner.run", return_value={"status": "unfinished"}
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                status = main([
+                    "--asl-spec", "spec.asl",
+                    "--aslref", "aslref",
+                    "--elf", "case.elf",
+                    "--lock", "pto-lock.json",
+                ])
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output.getvalue())["status"], "unfinished")
+
+    def test_harness_emits_a_stop_test_only_for_a_requested_stop_pc(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "case.elf"
+            make_elf(path)
+            image = parse_elf(path)
+            common = dict(
+                asl_spec=path,
+                aslref=path,
+                elf=path,
+                max_steps=4,
+                result_address=0,
+                result_size=0,
+            )
+            unrequested = build_harness(
+                image, RunConfiguration(stop_pc=None, **common)
+            )
+            self.assertNotIn("PTO_FINAL_TPC", unrequested)
+            self.assertIn("PTO_STEP_LIMIT", unrequested)
+
+            requested = build_harness(
+                image, RunConfiguration(stop_pc=0, **common)
+            )
+            self.assertIn("PTO_FINAL_TPC", requested)
+            self.assertIn("if ReadTPC() == Zeros{PTO_XLEN} + 0x0 then", requested)
+
     def test_host_memory_runner_owns_only_physical_storage(self) -> None:
         source = (
             pathlib.Path(__file__).parents[1]

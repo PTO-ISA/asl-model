@@ -211,8 +211,8 @@ class MultiPeRunResult:
     def ok(self) -> bool:
         if not self.steps or any(step.returncode != 0 for step in self.steps):
             return False
-        if self.termination == "max_instructions":
-            return True
+        # A run that stopped at the instruction bound did not finish, so it is
+        # not a pass even when every step committed.
         return self.termination == "all_finished" and all(
             context.finished for context in self.contexts
         )
@@ -229,7 +229,16 @@ class MultiPeRunResult:
             "sidecar_status": "not-provided",
             "golden_status": "not-provided",
             "run_kind": "multi-pe",
-            "status": "passed" if self.ok else "failed",
+            "status": (
+                "passed"
+                if self.ok
+                else (
+                    "unfinished"
+                    if self.termination == "max_instructions"
+                    and all(step.returncode == 0 for step in self.steps)
+                    else "failed"
+                )
+            ),
             "termination": self.termination,
             "model_profile": self.model_profile,
             "entry_point": self.image.entry_point,

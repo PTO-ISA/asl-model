@@ -107,7 +107,10 @@ class RunConfiguration:
     asl_spec: pathlib.Path
     aslref: pathlib.Path
     elf: pathlib.Path
-    stop_pc: int
+    # ``None`` means the caller did not request a stop PC.  There is no
+    # default value: a stop test that nobody asked for can be satisfied by an
+    # unrelated TPC and turn "the program never ran" into a pass.
+    stop_pc: int | None
     max_steps: int
     result_address: int
     result_size: int
@@ -628,25 +631,31 @@ def build_harness(image: ElfImage, configuration: RunConfiguration) -> str:
         "        end;",
         "        previous_previous_pc = previous_pc;",
         "        previous_pc = step_pc;",
-        f"        if ReadTPC() == {_word(configuration.stop_pc)} then",
-        "            model_stop_hits = model_stop_hits + 1;",
-        f"            if model_stop_hits == {configuration.stop_after_hits} then",
-        f"                for result_index = 0 to {configuration.result_size - 1} do"
-        if configuration.result_size else "                pass;",
     ])
-    if configuration.result_size:
+    if configuration.stop_pc is not None:
+        # Emit the stop test only for a stop PC the caller actually asked for.
         lines.extend([
-            '                    println "PTO_RESULT_BYTE ", result_index, " ",',
-            "                        UInt(ReadPhysicalMemoryByte("
-            f"                            {_word(configuration.result_address)} +"
-            " NaturalToWord(result_index)));",
-            "                end;",
+            f"        if ReadTPC() == {_word(configuration.stop_pc)} then",
+            "            model_stop_hits = model_stop_hits + 1;",
+            f"            if model_stop_hits == {configuration.stop_after_hits} then",
+            f"                for result_index = 0 to {configuration.result_size - 1} do"
+            if configuration.result_size else "                pass;",
+        ])
+        if configuration.result_size:
+            lines.extend([
+                '                    println "PTO_RESULT_BYTE ", result_index, " ",',
+                "                        UInt(ReadPhysicalMemoryByte("
+                f"                            {_word(configuration.result_address)} +"
+                " NaturalToWord(result_index)));",
+                "                end;",
+            ])
+        lines.extend([
+            '                println "PTO_FINAL_TPC ", UInt(ReadTPC());',
+            "                return 0;",
+            "            end;",
+            "        end;",
         ])
     lines.extend([
-        '                println "PTO_FINAL_TPC ", UInt(ReadTPC());',
-        "                return 0;",
-        "            end;",
-        "        end;",
         "    end;",
         '    println "PTO_STEP_LIMIT";',
         "    return 3;",
@@ -1014,6 +1023,10 @@ def _validate_sidecar(configuration: RunConfiguration, image: ElfImage,
 
     execution = _object(document.get("execution"), "execution")
     stop_symbol_name = _text(execution.get("stop_symbol"), "execution.stop_symbol")
+    if configuration.stop_pc is None:
+        raise ValueError(
+            "sidecar declares a stop symbol but no stop PC was requested"
+        )
     if _unique_symbol(image, stop_symbol_name).value != configuration.stop_pc:
         raise ValueError("sidecar stop symbol mismatch")
 
@@ -1139,10 +1152,26 @@ def run(configuration: RunConfiguration) -> dict[str, object]:
             f"after {aslref_elapsed_ms:.3f} ms: "
             + diagnostics
         )
-    result, final_tpc = parse_result(completed.stdout, configuration.result_size)
+    step_limit_reached = any(
+        line.strip() == "PTO_STEP_LIMIT" for line in completed.stdout.splitlines()
+    )
+    if step_limit_reached:
+        # The harness exhausted max_steps without meeting a requested stop.
+        # That is an unfinished run, never a pass.
+        result = bytes(configuration.result_size)
+        final_tpc = None
+        status = "unfinished"
+        stop_reached = False
+    else:
+        result, final_tpc = parse_result(completed.stdout, configuration.result_size)
+        stop_reached = configuration.stop_pc is not None
+        # "passed" requires positive evidence: a stop PC the caller requested
+        # and a harness that reached it.
+        status = "passed" if stop_reached else "failed"
     manifest: dict[str, object] = {
         "schema": "pto-asl-model-run-v1",
-        "status": "passed",
+        "status": status,
+        "stop_reached": stop_reached,
         "elf": {
             "path": configuration.elf.name,
             "sha256": image.sha256,
@@ -1239,7 +1268,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--aslref", required=True, type=pathlib.Path)
     parser.add_argument("--elf", required=True, type=pathlib.Path)
     parser.add_argument("--sidecar", type=pathlib.Path)
-    parser.add_argument("--stop-pc", type=_integer, default=0)
+    # No default: a stop PC must be requested explicitly, otherwise a stray
+    # TPC value could satisfy a test the caller never asked for.
+    parser.add_argument("--stop-pc", type=_integer, default=None)
     parser.add_argument("--stop-after-hits", type=int, default=1)
     parser.add_argument("--start-pc", type=_integer, default=0)
     parser.add_argument("--start-acr", type=int, default=0)
@@ -1293,7 +1324,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ))
     if not arguments.quiet:
         print(json.dumps(manifest, sort_keys=True))
-    return 0
+    return 0 if manifest["status"] == "passed" else 1
 
 
 if __name__ == "__main__":
