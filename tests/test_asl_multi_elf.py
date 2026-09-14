@@ -501,7 +501,10 @@ class MultiPeElfRunnerTest(unittest.TestCase):
             executor_factory=lambda: executor,
         )
 
-        self.assertTrue(result.ok)
+        # Two committed steps that stop at the bound are progress, not a pass.
+        self.assertFalse(result.ok)
+        self.assertEqual(result.termination, "max_instructions")
+        self.assertEqual(result.as_dict()["status"], "unfinished")
         self.assertEqual([step.pe_id for step in result.steps], [0, 1])
         self.assertTrue(executor.closed)
         self.assertEqual(result.runtime_metrics["parallel"]["rounds"], 1)
@@ -536,7 +539,8 @@ class MultiPeElfRunnerTest(unittest.TestCase):
             executor_factory=factory,
         )
 
-        self.assertTrue(result.ok)
+        self.assertEqual(result.termination, "max_instructions")
+        self.assertEqual(result.as_dict()["status"], "unfinished")
         self.assertEqual(len(created), 2)
         self.assertTrue(all(executor.closed for executor in created))
         self.assertEqual([step.pe_id for step in result.steps], [0, 1])

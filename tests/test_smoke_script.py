@@ -38,12 +38,12 @@ class ElfSmokeScriptTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertIsNone(smoke._resolve_spec(Path(directory)))
 
-    def test_bounded_prefix_is_successful_smoke_but_not_closure_evidence(self):
+    def test_terminal_run_is_a_pass_but_not_closure_evidence(self):
         smoke = _script_module()
         payload = {
             "status": "passed",
-            "complete": False,
-            "termination": "max_instructions",
+            "complete": True,
+            "termination": "asl_terminal",
             "pe_count": 1,
             "steps": [{"address": 0x1000, "next_pc": 0x1004}],
         }
@@ -79,6 +79,43 @@ class ElfSmokeScriptTest(unittest.TestCase):
             self.assertIn("--parallel-pe-steps", command)
             with self.assertRaisesRegex(ValueError, "semantic payload"):
                 validate_semantic_payload(result)
+
+    def test_bounded_prefix_is_not_a_pass(self):
+        smoke = _script_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            elf = root / "case.elf"
+            spec = root / "pto-spec.asl"
+            elf.write_bytes(b"\x7fELF" + bytes(64))
+            spec.write_text("// generated", encoding="utf-8")
+            for payload in (
+                {
+                    "status": "unfinished",
+                    "complete": False,
+                    "termination": "max_instructions",
+                    "pe_count": 1,
+                    "steps": [{"address": 0x1000, "next_pc": 0x1004}],
+                },
+                # A stale runner that still labels a bounded prefix as passed
+                # must not be able to make the wrapper report success.
+                {
+                    "status": "passed",
+                    "complete": False,
+                    "termination": "max_instructions",
+                    "pe_count": 1,
+                    "steps": [{"address": 0x1000, "next_pc": 0x1004}],
+                },
+            ):
+                with self.subTest(status=payload["status"]):
+                    completed = mock.Mock(
+                        returncode=1, stdout=json.dumps(payload), stderr=""
+                    )
+                    with mock.patch.object(
+                        smoke.subprocess, "run", return_value=completed
+                    ):
+                        self.assertEqual(
+                            smoke.main([str(elf), "--pto-spec", str(spec)]), 1
+                        )
 
     def test_failed_or_backend_error_result_remains_nonzero(self):
         smoke = _script_module()

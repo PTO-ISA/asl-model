@@ -326,7 +326,10 @@ class EmbeddedAslRefIntegrationTest(unittest.TestCase):
                 cache_root=Path(directory),
             ).run(fixture, pe_count=2, max_instructions=2)
 
-        self.assertTrue(result.ok)
+        # Two committed steps are a bounded prefix, not a finished run.
+        self.assertFalse(result.ok)
+        self.assertEqual(result.termination, "max_instructions")
+        self.assertEqual(result.as_dict()["status"], "unfinished")
         self.assertEqual([step.pe_id for step in result.steps], [0, 1])
         self.assertTrue(all(step.length_bits == 32 for step in result.steps))
         self.assertTrue(all(step.status == "committed" for step in result.steps))

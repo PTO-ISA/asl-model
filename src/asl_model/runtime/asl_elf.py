@@ -80,10 +80,16 @@ class ElfRunResult:
 
     def as_dict(self) -> dict[str, object]:
         failed = any(step.returncode != 0 for step in self.steps)
-        bounded_success = (
-            not failed
-            and self.termination in {"asl_terminal", "max_instructions"}
-        )
+        # Only an observed ASL terminal event is a pass.  A run that stopped
+        # because it used its whole instruction budget never finished, so it
+        # must not be reported as one.
+        passed = not failed and self.termination == "asl_terminal"
+        if passed:
+            status = "passed"
+        elif not failed and self.termination == "max_instructions":
+            status = "unfinished"
+        else:
+            status = "failed"
         return {
             "schema": "pto-asl-model-smoke-v1",
             "validation_level": "smoke",
@@ -95,13 +101,11 @@ class ElfRunResult:
             "sidecar_status": "not-provided",
             "golden_status": "not-provided",
             "run_kind": "single-pe",
-            # A bounded prefix that has not reached an ASL terminal event is
-            # diagnostic progress, not a successful ELF run.
-            # ``complete`` distinguishes an observed ASL terminal event from
-            # a deliberately bounded diagnostic prefix.  Both are successful
-            # executions at their requested scope; out-of-image, decode and
-            # runtime failures remain failures.
-            "status": "passed" if bounded_success else "failed",
+            # ``unfinished`` is diagnostic progress: every requested step
+            # committed, but the run stopped at the instruction bound without
+            # reaching a terminal event.  Out-of-image, decode, fault and
+            # runtime results remain ``failed``.
+            "status": status,
             "complete": self.complete,
             "termination": self.termination,
             "entry_point": self.image.entry_point,

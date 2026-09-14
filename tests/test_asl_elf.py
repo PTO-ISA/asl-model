@@ -91,7 +91,9 @@ class ElfLoaderTest(unittest.TestCase):
             path.write_bytes(header + program + bytes(120 - len(header) - len(program)) + code)
             runner = AslElfRunner(SPEC_ROOT)
             result = runner.run(path, length_bits=None, max_instructions=2)
-            self.assertEqual(result.as_dict()["status"], "passed")
+            # The bound is not a pass: the run never reached a terminal event.
+            self.assertEqual(result.as_dict()["status"], "unfinished")
+            self.assertFalse(result.complete)
             self.assertEqual(result.steps[0].length_bits, 32)
             self.assertEqual(len(result.steps), 2)
             self.assertEqual(result.steps[1].address, entry + 4)
