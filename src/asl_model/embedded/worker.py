@@ -406,6 +406,28 @@ class EmbeddedAslWorker:
         if response != "status 0":
             raise EmbeddedWorkerError(f"unexpected select_pe response: {response}")
 
+    def install_pe_context(self, pe_id: int) -> None:
+        """Make one PE's stored execution context the live context."""
+
+        if not isinstance(pe_id, int) or pe_id < 0:
+            raise ValueError("PE id must be a non-negative integer")
+        response = self.request(f"install_pe_context {pe_id}")
+        if response != "status 0":
+            raise EmbeddedWorkerError(
+                f"unexpected install_pe_context response: {response}"
+            )
+
+    def capture_pe_context(self, pe_id: int) -> None:
+        """Store the live execution context as one PE's context."""
+
+        if not isinstance(pe_id, int) or pe_id < 0:
+            raise ValueError("PE id must be a non-negative integer")
+        response = self.request(f"capture_pe_context {pe_id}")
+        if response != "status 0":
+            raise EmbeddedWorkerError(
+                f"unexpected capture_pe_context response: {response}"
+            )
+
     def peek_pe_gpr(self, pe_id: int, index: int) -> int:
         """Read one GPR from an explicit ASL PE register file."""
 
