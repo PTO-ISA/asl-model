@@ -10,6 +10,7 @@ from asl_model.runtime.multi_elf import (
     PeContext,
     UnsupportedPeStateScope,
 )
+from asl_model.embedded import EmbeddedWorkerTimeout
 from asl_model.runtime.protocol import ProgramImage, ProgramSegment
 from asl_model.runtime.protocol import InstructionRequest
 from asl_model.runtime.profile import AslModelProfile
@@ -92,6 +93,21 @@ class CoreScopedFakeWorker(ScopedFakeWorker):
 class FailingAutoWorker(ScopedFakeWorker):
     def step_auto(self):
         raise RuntimeError("synthetic host failure")
+
+
+class TimingOutAutoWorker(ScopedFakeWorker):
+    def step_auto(self):
+        raise EmbeddedWorkerTimeout("embedded ASL worker timed out after 5s")
+
+
+class TimeoutExecutor(FakeExecutor):
+    """Report a host budget timeout instead of an ASL rejection."""
+
+    def execute(self, context, request):
+        del context, request
+        return InstructionExecution(
+            "step_timeout", 2, error="embedded ASL worker timed out after 5s"
+        )
 
 
 class BarrierWorker(ScopedFakeWorker):
@@ -289,6 +305,34 @@ class MultiPeElfRunnerTest(unittest.TestCase):
         self.assertEqual(request.encoding, b"\0\0")
         self.assertFalse(execution.ok)
         self.assertIn("synthetic host failure", execution.error)
+        self.assertEqual(execution.status, "runtime_error")
+
+    def test_worker_budget_timeout_is_not_reported_as_an_asl_step_failure(self):
+        worker = TimingOutAutoWorker()
+        executor = AslWorkerExecutor(
+            "/unused", worker_factory=lambda *_args, **_kwargs: worker
+        )
+        context = PeContext(0, 0, 0x1000)
+        executor.start(self.image, (context,))
+        try:
+            _request, execution = executor.step_next(context)
+        finally:
+            executor.close()
+
+        self.assertFalse(execution.ok)
+        self.assertEqual(execution.status, "step_timeout")
+        self.assertIn("timed out", execution.error)
+
+    def test_run_reports_a_step_timeout_termination(self):
+        result = AslMultiPeElfRunner("/unused").run_image(
+            self.image,
+            pe_count=2,
+            max_instructions=4,
+            executor_factory=TimeoutExecutor,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.termination, "step_timeout")
+        self.assertEqual(result.as_dict()["status"], "failed")
 
     def test_single_worker_scope_selects_context_for_one_pe(self):
         worker = ScopedFakeWorker()

@@ -51,6 +51,12 @@ scripts/asl-model-elf-smoke \
 committed is a successful bounded smoke run, while an ASL fault or host-memory
 failure is reported as failed.
 
+`--timeout-s` bounds how long the host waits for one worker protocol line, so a
+step that computes for longer than the budget without emitting one is reported
+as `termination=step_timeout` with a `step_timeout` step status. That is a
+host budget failure, not an ASL rejection; a step the model actually refused
+keeps the `step_failed`/`rejected` shape and its fault code.
+
 `core` worker scope is an explicit diagnostic experiment because current PTO
 ASL does not expose complete per-PE context state. It requires
 `--experimental-core` and must not be used as conformance or promotion

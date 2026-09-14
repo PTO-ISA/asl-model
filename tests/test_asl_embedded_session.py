@@ -9,7 +9,11 @@ from asl_model.session import (
     SessionClosedError,
     SessionError,
 )
-from asl_model.embedded import EmbeddedAslWorker
+from asl_model.embedded import (
+    EmbeddedAslWorker,
+    EmbeddedWorkerError,
+    EmbeddedWorkerTimeout,
+)
 from asl_model.runtime.asl_elf import AslElfRunner
 from asl_model.runtime.multi_elf import AslMultiPeElfRunner
 from tools.generate_smoke_elf import build as build_smoke_elf
@@ -46,6 +50,36 @@ class FakeWorker:
     def stop(self):
         self.calls.append(("stop",))
         self.stopped = True
+
+
+class EmbeddedWorkerProtocolTest(unittest.TestCase):
+    """A host budget timeout must stay distinguishable from an ASL decision."""
+
+    def test_a_missing_response_raises_a_timeout_not_a_generic_error(self):
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, read_fd)
+        self.addCleanup(os.close, write_fd)
+
+        class SilentStream:
+            def fileno(self):
+                return read_fd
+
+            def readline(self):  # pragma: no cover - the timeout fires first
+                raise AssertionError("a timed-out read must not consume a line")
+
+        with tempfile.TemporaryDirectory(prefix="asl-model-readline-") as directory:
+            worker = EmbeddedAslWorker(
+                Path("/unused"), timeout_s=0.05, cache_root=Path(directory)
+            )
+            with self.assertRaises(EmbeddedWorkerTimeout) as caught:
+                worker._readline(SilentStream())
+
+        self.assertIsInstance(caught.exception, EmbeddedWorkerError)
+        self.assertIn("timed out after 0.05s", str(caught.exception))
+
+    def test_a_timeout_is_not_reported_as_an_asl_step_failure(self):
+        self.assertFalse(issubclass(EmbeddedWorkerTimeout, AssertionError))
+        self.assertTrue(issubclass(EmbeddedWorkerTimeout, EmbeddedWorkerError))
 
 
 class EmbeddedAslSessionUnitTest(unittest.TestCase):

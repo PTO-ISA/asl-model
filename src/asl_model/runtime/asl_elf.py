@@ -5,13 +5,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..embedded import EmbeddedAslWorker
+from ..embedded import EmbeddedAslWorker, EmbeddedWorkerTimeout
 from .completion import AslCompletionPolicy
 from .elf import ElfLoader
 from .host_memory import HostMemoryBridge
 from .config import RuntimeLayout
 from .profile import AslModelProfile
 from .protocol import ElfLoadRequest, ProgramImage
+
+
+def host_failure_status(error: BaseException) -> str:
+    """Name a host-side execution failure without implying an ASL decision.
+
+    A worker budget timeout means ASL never decided anything about the
+    instruction, so it must not be reported as an ASL step failure.
+    """
+
+    if isinstance(error, EmbeddedWorkerTimeout):
+        return "step_timeout"
+    return "runtime_error"
 
 
 def _runtime_layout_dict(layout: RuntimeLayout) -> dict[str, object]:
@@ -219,13 +231,13 @@ class AslElfRunner:
                                 address=address,
                                 instruction=0,
                                 length_bits=0,
-                                status="runtime_error",
+                                status=host_failure_status(error),
                                 returncode=2,
                                 error=str(error),
                                 finished=False,
                             )
                         )
-                        termination = "runtime_error"
+                        termination = host_failure_status(error)
                         break
                     instruction = auto.instruction
                     current_length = auto.length_bits
@@ -268,13 +280,13 @@ class AslElfRunner:
                                 address=address,
                                 instruction=instruction,
                                 length_bits=current_length,
-                                status="runtime_error",
+                                status=host_failure_status(error),
                                 returncode=2,
                                 error=str(error),
                                 finished=False,
                             )
                         )
-                        termination = "runtime_error"
+                        termination = host_failure_status(error)
                         break
                     next_pc = worker.peek_tpc() if status == 0 else None
                     fault_code = worker.peek_fault() if status != 0 else None
@@ -296,13 +308,13 @@ class AslElfRunner:
                             address=address,
                             instruction=instruction,
                             length_bits=current_length,
-                            status="runtime_error",
+                            status=host_failure_status(error),
                             returncode=2,
                             error=str(error),
                             finished=False,
                         )
                     )
-                    termination = "runtime_error"
+                    termination = host_failure_status(error)
                     break
                 steps.append(
                     ElfStep(

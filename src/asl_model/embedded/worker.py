@@ -25,6 +25,15 @@ class EmbeddedWorkerError(RuntimeError):
     """The embedded ASLRef worker could not be built or contacted."""
 
 
+class EmbeddedWorkerTimeout(EmbeddedWorkerError):
+    """The embedded ASLRef worker produced no protocol line in time.
+
+    A timeout is a host-side budget failure.  ASL never decided anything
+    about the instruction, so consumers must be able to keep it distinct
+    from an ASL rejection or a model fault.
+    """
+
+
 @dataclass(frozen=True)
 class WorkerIdentity:
     cache_key: str
@@ -828,7 +837,7 @@ class EmbeddedAslWorker:
             if not selector.select(self.timeout_s):
                 if self._process is not None:
                     self._terminate(self._process)
-                raise EmbeddedWorkerError(
+                raise EmbeddedWorkerTimeout(
                     f"embedded ASL worker timed out after {self.timeout_s:g}s"
                 )
             line = stream.readline()

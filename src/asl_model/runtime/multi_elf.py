@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
-from ..embedded import EmbeddedAslWorker
+from ..embedded import EmbeddedAslWorker, EmbeddedWorkerTimeout
 from .completion import AslCompletionPolicy
 from .elf import ElfLoader
 from .host_memory import HostMemoryBridge
@@ -59,6 +59,18 @@ class PeContext:
     finished: bool = False
     instruction_count: int = 0
     metadata: dict[str, object] = field(default_factory=dict)
+
+
+def host_failure_status(error: BaseException) -> str:
+    """Name a host-side execution failure without implying an ASL decision.
+
+    A worker budget timeout means ASL never decided anything about the
+    instruction, so it must not be reported as an ASL step failure.
+    """
+
+    if isinstance(error, EmbeddedWorkerTimeout):
+        return "step_timeout"
+    return "runtime_error"
 
 
 @dataclass(frozen=True)
@@ -566,7 +578,9 @@ class AslWorkerExecutor:
                 self.memory_bridge.generation
             )
         except Exception as error:  # worker errors are part of the report
-            return InstructionExecution("failed", 2, error=str(error))
+            return InstructionExecution(
+                host_failure_status(error), 2, error=str(error)
+            )
         execution = InstructionExecution(
             status="committed" if status == 0 else "rejected",
             returncode=0 if status == 0 else 1,
@@ -625,7 +639,9 @@ class AslWorkerExecutor:
                     pe_id=context.pe_id,
                     thread_id=context.thread_id,
                 ),
-                InstructionExecution("failed", 2, error=str(error)),
+                InstructionExecution(
+                    host_failure_status(error), 2, error=str(error)
+                ),
             )
 
     def _synchronize_worker_memory(self, pe_id: int, worker) -> None:
@@ -886,7 +902,7 @@ class AslMultiPeElfRunner:
                 (time.perf_counter() - step_started) * 1000.0,
             )
 
-        def record_outcome(context: PeContext, outcome) -> bool:
+        def record_outcome(context: PeContext, outcome) -> str | None:
             request, execution, width, elapsed_ms = outcome
             terminal = execution.ok and completion.is_terminal(
                 int.from_bytes(request.encoding, "little"), width
@@ -929,7 +945,11 @@ class AslMultiPeElfRunner:
                     elapsed_ms=elapsed_ms,
                 )
             )
-            return not execution.ok
+            if execution.ok:
+                return None
+            if execution.status in {"step_timeout", "runtime_error"}:
+                return execution.status
+            return "step_failed"
 
         step_pool = None
         try:
@@ -992,8 +1012,9 @@ class AslMultiPeElfRunner:
                                 scheduled[0],
                                 outcome,
                             )
-                        record_outcome(scheduled[0], outcome)
-                        termination = "step_failed"
+                        termination = (
+                            record_outcome(scheduled[0], outcome) or "step_failed"
+                        )
                         return MultiPeRunResult(
                             image,
                             contexts,
@@ -1037,8 +1058,9 @@ class AslMultiPeElfRunner:
                                 context,
                                 outcome,
                             )
-                        if record_outcome(context, outcome):
-                            termination = "step_failed"
+                        failure = record_outcome(context, outcome)
+                        if failure is not None:
+                            termination = failure
                             return MultiPeRunResult(
                                 image,
                                 contexts,
