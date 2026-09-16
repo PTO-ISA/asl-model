@@ -194,26 +194,6 @@ module Protocol = struct
         22
     | [ "step_auto" ] -> 23
     | [ "clear_mem_cache" ] -> 24
-    | [ "install_pe_context"; pe ] ->
-        let pe =
-          try int_of_string pe
-          with _ -> invalid_arg "install_pe_context PE id must be an integer"
-        in
-        pending := Some {
-          instruction = Z.zero; length_bits = 0; index = 0; pe;
-          address = Z.zero; value = 0
-        };
-        25
-    | [ "capture_pe_context"; pe ] ->
-        let pe =
-          try int_of_string pe
-          with _ -> invalid_arg "capture_pe_context PE id must be an integer"
-        in
-        pending := Some {
-          instruction = Z.zero; length_bits = 0; index = 0; pe;
-          address = Z.zero; value = 0
-        };
-        26
     | [ "quit" ] -> 0
     | _ -> 255
 
@@ -726,19 +706,6 @@ begin
                 UInt(ReadTPC()), instruction);
         elsif command == 24 then
             HostClearMemoryCache();
-            HostWriteStatus(0);
-        elsif command == 25 then
-            // PTO-ARCH-PROGRAMMING-MODEL-PE-CONTEXT: make one PE's stored
-            // execution context the live one.  The host calls this before
-            // stepping a PE so its program counter, bundle lifecycle, commit
-            // argument, predicate file, temporary queues and fault state are
-            // the PE's own rather than the previous PE's leftovers.
-            let pe = HostReadPE();
-            InstallPEContext(pe as MemoryAgentId);
-            HostWriteStatus(0);
-        elsif command == 26 then
-            let pe = HostReadPE();
-            CapturePEContext(pe as MemoryAgentId);
             HostWriteStatus(0);
         else
             HostWriteStatus(2);

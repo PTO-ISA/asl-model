@@ -83,16 +83,6 @@ class CoreScopedFakeWorker(ScopedFakeWorker):
     def __init__(self, *_args, **_kwargs):
         super().__init__(*_args, **_kwargs)
         self.step_count = 0
-        self.installed: list[int] = []
-        self.captured: list[int] = []
-
-    def install_pe_context(self, pe_id):
-        self.calls.append(("install_pe_context", pe_id))
-        self.installed.append(pe_id)
-
-    def capture_pe_context(self, pe_id):
-        self.calls.append(("capture_pe_context", pe_id))
-        self.captured.append(pe_id)
 
     def step(self, _instruction, _length_bits):
         self.step_count += 1
@@ -388,41 +378,12 @@ class MultiPeElfRunnerTest(unittest.TestCase):
                     pc=0x1000, encoding=b"\x01\x00", pe_id=1, thread_id=1
                 ),
             )
+            self.assertTrue(first.ok)
+            self.assertTrue(second.ok)
+            self.assertEqual(worker.step_count, 2)
+            self.assertEqual(first.next_pc, second.next_pc)
         finally:
             executor.close()
-
-        self.assertTrue(first.ok)
-        self.assertTrue(second.ok)
-        self.assertEqual(worker.step_count, 2)
-        self.assertEqual(first.next_pc, second.next_pc)
-        # Each PE steps inside its own execution context, so the shared
-        # interpreter never runs one PE with another PE's live state.
-        self.assertEqual(worker.installed, [0, 1])
-        self.assertEqual(worker.captured, [0, 1])
-
-    def test_core_worker_scope_requires_the_context_api(self):
-        worker = ScopedFakeWorker()
-        executor = AslWorkerExecutor(
-            "/unused",
-            worker_scope="core",
-            experimental_core=True,
-            worker_factory=lambda *_args, **_kwargs: worker,
-        )
-        contexts = (PeContext(0, 0, 0x1000), PeContext(1, 1, 0x1000))
-        executor.start(self.image, contexts)
-        try:
-            execution = executor.execute(
-                contexts[1],
-                InstructionRequest(
-                    pc=0x1000, encoding=b"\x01\x00", pe_id=1, thread_id=1
-                ),
-            )
-        finally:
-            executor.close()
-        # A worker without the context API cannot serve core scope; the
-        # executor reports it as a failed step instead of a silent pass.
-        self.assertFalse(execution.ok)
-        self.assertIn("install_pe_context", execution.error)
 
     def test_core_scope_requires_explicit_experimental_opt_in(self):
         with self.assertRaisesRegex(UnsupportedPeStateScope, "experimental"):

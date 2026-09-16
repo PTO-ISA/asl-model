@@ -517,39 +517,6 @@ class AslWorkerExecutor:
         worker.start(source, spec_path=self.profile_spec)
 
     def _shared_worker_source(self, contexts: tuple[PeContext, ...]) -> str:
-        parts = []
-        if self.worker_scope == "core":
-            # Give every PE its own stored execution context: start from the
-            # post-reset context, inject that PE's entry state, then capture it
-            # back.  The scalar register file is already per-PE, so only the
-            # execution context has to be seeded per PE.
-            for context in contexts:
-                parts.extend(
-                    (
-                        f"SelectMemoryEventAgent({context.pe_id} as MemoryAgentId);",
-                        f"InstallPEContext({context.pe_id} as MemoryAgentId);",
-                        f"WriteTPC(Zeros{{PTO_XLEN}} + 0x{context.pc:x});",
-                    )
-                )
-                if self.runtime_layout and self.runtime_layout.stacks:
-                    parts.append(
-                        f"WriteGPR({self.model_profile.frame_sp_index}, "
-                        f"Zeros{{PTO_XLEN}} + 0x{self.memory_bridge.stack_pointer_for(context.pe_id):x});"
-                    )
-                if callable(self.initial_source):
-                    source = self.initial_source(context).strip()
-                    if source:
-                        parts.append(source)
-                parts.append(
-                    f"CapturePEContext({context.pe_id} as MemoryAgentId);"
-                )
-            parts.extend(
-                (
-                    "SelectMemoryEventAgent(0 as MemoryAgentId);",
-                    "InstallPEContext(0 as MemoryAgentId);",
-                )
-            )
-            return "\n".join(parts)
         parts = [
             "SelectMemoryEventAgent(0 as MemoryAgentId);",
             f"WriteTPC(Zeros{{PTO_XLEN}} + 0x{contexts[0].pc:x});",
@@ -597,17 +564,7 @@ class AslWorkerExecutor:
         try:
             worker = self.workers[context.pe_id]
             self._synchronize_worker_memory(context.pe_id, worker)
-            if self.worker_scope == "core":
-                install = getattr(worker, "install_pe_context", None)
-                capture = getattr(worker, "capture_pe_context", None)
-                if install is None or capture is None:
-                    raise UnsupportedPeStateScope(
-                        "core worker scope requires install_pe_context and "
-                        "capture_pe_context on its worker"
-                    )
-                worker.select_pe(context.pe_id)
-                install(context.pe_id)
-            elif self.worker_scope == "single":
+            if self.worker_scope in {"single", "core"}:
                 select_pe = getattr(worker, "select_pe", None)
                 set_tpc = getattr(worker, "set_tpc", None)
                 if select_pe is None or set_tpc is None:
@@ -619,10 +576,6 @@ class AslWorkerExecutor:
             status = worker.step(
                 int.from_bytes(request.encoding, "little"), len(request.encoding) * 8
             )
-            if self.worker_scope == "core":
-                # Store this PE's context back before another PE can install
-                # its own, so no PE observes another PE's live state.
-                worker.capture_pe_context(context.pe_id)
             next_pc = worker.peek_tpc() if status == 0 else None
             terminal_pending = (
                 worker.peek_terminal_pending()
@@ -654,22 +607,10 @@ class AslWorkerExecutor:
         worker = self.workers[context.pe_id]
         try:
             self._synchronize_worker_memory(context.pe_id, worker)
-            if self.worker_scope == "core":
-                install = getattr(worker, "install_pe_context", None)
-                capture = getattr(worker, "capture_pe_context", None)
-                if install is None or capture is None:
-                    raise UnsupportedPeStateScope(
-                        "core worker scope requires install_pe_context and "
-                        "capture_pe_context on its worker"
-                    )
-                worker.select_pe(context.pe_id)
-                install(context.pe_id)
-            elif self.worker_scope == "single":
+            if self.worker_scope in {"single", "core"}:
                 worker.select_pe(context.pe_id)
                 worker.set_tpc(context.pc)
             step = worker.step_auto()
-            if self.worker_scope == "core":
-                worker.capture_pe_context(context.pe_id)
             if step.length_bits not in {16, 32, 48, 64}:
                 raise RuntimeError(
                     f"ASL returned invalid instruction width {step.length_bits}"
