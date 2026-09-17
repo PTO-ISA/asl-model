@@ -324,6 +324,10 @@ class EmbeddedAslRefIntegrationTest(unittest.TestCase):
                 model_profile="linx-runtime",
                 worker_scope="per-pe",
                 cache_root=Path(directory),
+                # This exercises the fetch/step plumbing of two PE contexts,
+                # not the architectural four-PE model, which the runner
+                # refuses by default.
+                allow_unmodelled_multi_pe=True,
             ).run(fixture, pe_count=2, max_instructions=2)
 
         # Two committed steps are a bounded prefix, not a finished run.
