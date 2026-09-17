@@ -482,6 +482,17 @@ class EmbeddedAslWorker:
 
         return self._peek_flag("peek_bundle_body_active")
 
+    def peek_block_collective(self) -> bool:
+        """Observe whether the active block takes effect for a PE set.
+
+        A Tile-class block is executed once for the arriving PEs; a
+        control or fixed-point block is applied for each PE.  A four-PE
+        scheduler needs that distinction, and it has to come from ASL rather
+        than from a second instruction decoder in the host.
+        """
+
+        return self._peek_flag("peek_block_collective")
+
     def peek_acr(self) -> int:
         """Read the ASL-owned current access-control ring."""
 
