@@ -194,6 +194,7 @@ module Protocol = struct
         22
     | [ "step_auto" ] -> 23
     | [ "clear_mem_cache" ] -> 24
+    | [ "peek_block_collective" ] -> 25
     | [ "quit" ] -> 0
     | _ -> 255
 
@@ -589,6 +590,22 @@ begin
     return DeterminePTOInstructionLength(instruction[15:0]);
 end;
 
+func ActiveBlockIsCollective() => integer
+begin
+    // A block whose operation class is a Tile class takes effect for a
+    // participating PE set rather than for one PE: the runtime executes such a
+    // block once after its PEs arrive, and applies a control/fixed-point block
+    // for each PE.  Report the class so the runtime can tell them apart
+    // without decoding the instruction stream itself.
+    if !_BundleOperation.valid then return 0; end;
+    case _BundleOperation.operation_class of
+        when BundleOperation_TileElement,
+             BundleOperation_TileMemory,
+             BundleOperation_TileMatrix => return 1;
+        otherwise => return 0;
+    end;
+end;
+
 func main() => integer
 begin
     ResetProfileState();
@@ -707,6 +724,8 @@ begin
         elsif command == 24 then
             HostClearMemoryCache();
             HostWriteStatus(0);
+        elsif command == 25 then
+            HostWriteValue(ActiveBlockIsCollective());
         else
             HostWriteStatus(2);
         end;
