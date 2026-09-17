@@ -391,6 +391,17 @@ class MultiPeElfRunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(UnsupportedPeStateScope, "experimental"):
             AslMultiPeElfRunner("/unused", worker_scope="core")
 
+    def test_real_multi_pe_run_fails_closed_until_the_model_exists(self):
+        # One instruction stream plus a participating PE set is not
+        # implemented yet, so the real path must refuse rather than emit a
+        # number that could be read as an architectural result.
+        with self.assertRaisesRegex(
+            UnsupportedPeStateScope, "multi-PE execution is not modelled yet"
+        ):
+            AslMultiPeElfRunner(
+                "/unused", model_profile="linx-runtime"
+            ).run_image(self.image, pe_count=2, max_instructions=2)
+
     def test_per_pe_stack_banks_initialize_profile_selected_sp(self):
         workers = []
 

@@ -702,6 +702,7 @@ class AslMultiPeElfRunner:
         red_zone: int = 16,
         worker_scope: str = "per-pe",
         experimental_core: bool = False,
+        allow_unmodelled_multi_pe: bool = False,
         parallel_pe_steps: bool = False,
         model_profile: str = "portable",
         cache_root: Path | None = None,
@@ -735,6 +736,7 @@ class AslMultiPeElfRunner:
             )
         self.worker_scope = worker_scope
         self.experimental_core = experimental_core
+        self.allow_unmodelled_multi_pe = allow_unmodelled_multi_pe
         if parallel_pe_steps and worker_scope != "per-pe":
             raise UnsupportedPeStateScope(
                 "parallel PE steps require worker_scope='per-pe'"
@@ -805,6 +807,27 @@ class AslMultiPeElfRunner:
             raise UnsupportedPeStateScope(
                 "automatic multi-PE fetch requires model_profile='linx-runtime'; "
                 "portable diagnostics must provide an explicit length_bits"
+            )
+        # A core runs one instruction stream and a cooperative instruction
+        # takes effect for the participating PE set: private instructions must
+        # be applied for each PE while a collective is applied once for the
+        # arriving set, with per-PE progress owned by the runtime (the
+        # reference model keeps it in its per-thread status).  Neither shipped
+        # worker scope implements that yet, so a real multi-PE run must not
+        # emit a result that would be read as an architectural one.  Injected
+        # executors are test doubles and are exempt.
+        if (
+            pe_count > 1
+            and executor_factory is None
+            and not self.allow_unmodelled_multi_pe
+            and not self.experimental_core
+        ):
+            raise UnsupportedPeStateScope(
+                "multi-PE execution is not modelled yet: per-PE progress, the "
+                "per-PE application of private instructions and the single "
+                "application of a collective for the arriving PE set are not "
+                "implemented. Pass allow_unmodelled_multi_pe=True only for "
+                "plumbing diagnostics, never for conformance results."
             )
         if self._segment_for_pc(image, image.entry_point) is None:
             raise ValueError("ELF entry point is not inside a PT_LOAD segment")

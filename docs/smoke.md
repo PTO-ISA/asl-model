@@ -61,6 +61,15 @@ as `termination=step_timeout` with a `step_timeout` step status. That is a
 host budget failure, not an ASL rejection; a step the model actually refused
 keeps the `step_failed`/`rejected` shape and its fault code.
 
+`--pe-count` above one is refused by the runner until the four-PE model exists.
+A core runs one instruction stream and a cooperative instruction takes effect
+for the participating PE set, so a faithful run must apply private
+instructions for each PE, apply a collective once for the arriving set, and
+keep per-PE progress in the runtime. Neither shipped worker scope does that
+yet, so a real multi-PE run raises `UnsupportedPeStateScope` instead of
+reporting a result. `allow_unmodelled_multi_pe=True` exists only for plumbing
+diagnostics and must not be used for conformance evidence.
+
 `core` worker scope is an explicit diagnostic experiment because current PTO
 ASL does not expose complete per-PE context state. It requires
 `--experimental-core` and must not be used as conformance or promotion
