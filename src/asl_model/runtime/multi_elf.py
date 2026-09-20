@@ -312,8 +312,10 @@ class AslWorkerExecutor:
                 )
         self.initial_source = initial_source
         self.worker_factory = worker_factory
-        if worker_scope not in {"per-pe", "single", "core"}:
-            raise ValueError("worker_scope must be 'per-pe', 'core', or 'single'")
+        if worker_scope not in {"per-pe", "single", "core", "spmd"}:
+            raise ValueError(
+                "worker_scope must be 'per-pe', 'spmd', 'core', or 'single'"
+            )
         if worker_scope == "core" and not experimental_core:
             raise UnsupportedPeStateScope(
                 "core scope is experimental because PTO ASL does not yet expose "
@@ -377,7 +379,7 @@ class AslWorkerExecutor:
         )
         self.memory_bridge.load_image(image, runtime_layout=self.runtime_layout)
         self.close()
-        if self.worker_scope in {"single", "core"}:
+        if self.worker_scope in {"single", "core", "spmd"}:
             worker = self._make_worker(None)
             self._start_worker(worker, self._shared_worker_source(contexts))
             worker.ping()
@@ -564,7 +566,7 @@ class AslWorkerExecutor:
         try:
             worker = self.workers[context.pe_id]
             self._synchronize_worker_memory(context.pe_id, worker)
-            if self.worker_scope in {"single", "core"}:
+            if self.worker_scope in {"single", "core", "spmd"}:
                 select_pe = getattr(worker, "select_pe", None)
                 set_tpc = getattr(worker, "set_tpc", None)
                 if select_pe is None or set_tpc is None:
@@ -576,6 +578,8 @@ class AslWorkerExecutor:
             status = worker.step(
                 int.from_bytes(request.encoding, "little"), len(request.encoding) * 8
             )
+            if self.worker_scope == "spmd":
+                self._require_no_collective(worker, context)
             next_pc = worker.peek_tpc() if status == 0 else None
             terminal_pending = (
                 worker.peek_terminal_pending()
@@ -607,10 +611,12 @@ class AslWorkerExecutor:
         worker = self.workers[context.pe_id]
         try:
             self._synchronize_worker_memory(context.pe_id, worker)
-            if self.worker_scope in {"single", "core"}:
+            if self.worker_scope in {"single", "core", "spmd"}:
                 worker.select_pe(context.pe_id)
                 worker.set_tpc(context.pc)
             step = worker.step_auto()
+            if self.worker_scope == "spmd":
+                self._require_no_collective(worker, context)
             if step.length_bits not in {16, 32, 48, 64}:
                 raise RuntimeError(
                     f"ASL returned invalid instruction width {step.length_bits}"
@@ -658,6 +664,27 @@ class AslWorkerExecutor:
         if self._worker_memory_generation.get(pe_id) != generation:
             worker.clear_memory_cache()
             self._worker_memory_generation[pe_id] = generation
+
+    def _require_no_collective(self, worker, context: PeContext) -> None:
+        """Refuse to schedule a collective block one PE at a time.
+
+        A Tile-class block takes effect for the participating PE set, so it has
+        to be applied once for the arriving PEs.  Until that scheduler exists,
+        stop with a precise reason rather than applying the block once per PE
+        and reporting the result as architectural.
+        """
+
+        peek = getattr(worker, "peek_block_collective", None)
+        if peek is None:
+            raise UnsupportedPeStateScope(
+                "spmd worker scope requires peek_block_collective on its worker"
+            )
+        if peek():
+            raise UnsupportedPeStateScope(
+                f"collective block at pc=0x{context.pc:x} takes effect for the "
+                "participating PE set and is not scheduled yet; it must be "
+                "applied once after the arriving PEs have converged"
+            )
 
     def close(self) -> None:
         self.rollback_parallel_round()
@@ -727,8 +754,10 @@ class AslMultiPeElfRunner:
         self.stack_gap = stack_gap
         self.stack_stride = stack_stride
         self.red_zone = red_zone
-        if worker_scope not in {"per-pe", "single", "core"}:
-            raise ValueError("worker_scope must be 'per-pe', 'core', or 'single'")
+        if worker_scope not in {"per-pe", "single", "core", "spmd"}:
+            raise ValueError(
+                "worker_scope must be 'per-pe', 'spmd', 'core', or 'single'"
+            )
         if worker_scope == "core" and not experimental_core:
             raise UnsupportedPeStateScope(
                 "core scope is experimental because PTO ASL does not yet expose "
@@ -821,6 +850,7 @@ class AslMultiPeElfRunner:
             and executor_factory is None
             and not self.allow_unmodelled_multi_pe
             and not self.experimental_core
+            and self.worker_scope != "spmd"
         ):
             raise UnsupportedPeStateScope(
                 "multi-PE execution is not modelled yet: per-PE progress, the "
