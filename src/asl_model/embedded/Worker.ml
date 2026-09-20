@@ -195,6 +195,8 @@ module Protocol = struct
     | [ "step_auto" ] -> 23
     | [ "clear_mem_cache" ] -> 24
     | [ "peek_block_collective" ] -> 25
+    | [ "snapshot_core_block_state" ] -> 26
+    | [ "restore_core_block_state" ] -> 27
     | [ "quit" ] -> 0
     | _ -> 255
 
@@ -606,6 +608,88 @@ begin
     end;
 end;
 
+// A core holds two kinds of state: the per-PE scalar file, which belongs to a
+// PE, and the block/transfer state, which belongs to the instruction stream and
+// is consumed once.  The runtime applies one instruction for each PE, so a
+// second application has to observe the state the first one started from;
+// otherwise it sees a predecessor the first application already moved past and
+// the block transfer is rejected.  These two entry points take and restore that
+// core-scope snapshot without changing any ASL semantics.
+type CoreBlockControlSnapshot of record {
+    pc: Word,
+    bpc: Word,
+    bundle_active: boolean,
+    bundle_body_active: boolean,
+    commit_target_set: boolean,
+    condition_set: boolean,
+    terminal_pending: boolean,
+    sequential_pc: Word,
+    frame_stack_return_target: Word,
+    bundle_argument: Word,
+    bundle_argument_kind: bits(3),
+    barg: BundleArgumentRegister,
+    operation: BundleOperationDescriptor,
+    zero_participation_seen: boolean,
+    execution_domain_token: integer,
+    next_execution_domain_token: integer,
+    last_fault: FaultCode,
+    fault_address: Word
+};
+
+var _CoreBlockControlSnapshot : CoreBlockControlSnapshot;
+
+func SnapshotCoreBlockControl()
+begin
+    _CoreBlockControlSnapshot.pc = _PC;
+    _CoreBlockControlSnapshot.bpc = _BPC;
+    _CoreBlockControlSnapshot.bundle_active = _BundleActive;
+    _CoreBlockControlSnapshot.bundle_body_active = _BundleBodyActive;
+    _CoreBlockControlSnapshot.commit_target_set = _BundleCommitTargetSet;
+    _CoreBlockControlSnapshot.condition_set = _BundleConditionSet;
+    _CoreBlockControlSnapshot.terminal_pending = _SystemBlockTerminalPending;
+    _CoreBlockControlSnapshot.sequential_pc = _BundleSequentialPC;
+    _CoreBlockControlSnapshot.frame_stack_return_target =
+        _FrameStackReturnTarget;
+    _CoreBlockControlSnapshot.bundle_argument = _BundleArgument;
+    _CoreBlockControlSnapshot.bundle_argument_kind = _BundleArgumentKind;
+    _CoreBlockControlSnapshot.barg = _BARG;
+    _CoreBlockControlSnapshot.operation = _BundleOperation;
+    _CoreBlockControlSnapshot.zero_participation_seen =
+        _BundleZeroParticipationSeen;
+    _CoreBlockControlSnapshot.execution_domain_token =
+        _BundleExecutionDomainToken;
+    _CoreBlockControlSnapshot.next_execution_domain_token =
+        _NextBundleExecutionDomainToken;
+    _CoreBlockControlSnapshot.last_fault = _LastFault;
+    _CoreBlockControlSnapshot.fault_address = _FaultAddress;
+end;
+
+func RestoreCoreBlockControl()
+begin
+    _PC = _CoreBlockControlSnapshot.pc;
+    _BPC = _CoreBlockControlSnapshot.bpc;
+    _BundleActive = _CoreBlockControlSnapshot.bundle_active;
+    _BundleBodyActive = _CoreBlockControlSnapshot.bundle_body_active;
+    _BundleCommitTargetSet = _CoreBlockControlSnapshot.commit_target_set;
+    _BundleConditionSet = _CoreBlockControlSnapshot.condition_set;
+    _SystemBlockTerminalPending = _CoreBlockControlSnapshot.terminal_pending;
+    _BundleSequentialPC = _CoreBlockControlSnapshot.sequential_pc;
+    _FrameStackReturnTarget =
+        _CoreBlockControlSnapshot.frame_stack_return_target;
+    _BundleArgument = _CoreBlockControlSnapshot.bundle_argument;
+    _BundleArgumentKind = _CoreBlockControlSnapshot.bundle_argument_kind;
+    _BARG = _CoreBlockControlSnapshot.barg;
+    _BundleOperation = _CoreBlockControlSnapshot.operation;
+    _BundleZeroParticipationSeen =
+        _CoreBlockControlSnapshot.zero_participation_seen;
+    _BundleExecutionDomainToken =
+        _CoreBlockControlSnapshot.execution_domain_token;
+    _NextBundleExecutionDomainToken =
+        _CoreBlockControlSnapshot.next_execution_domain_token;
+    _LastFault = _CoreBlockControlSnapshot.last_fault;
+    _FaultAddress = _CoreBlockControlSnapshot.fault_address;
+end;
+
 func main() => integer
 begin
     ResetProfileState();
@@ -726,6 +810,12 @@ begin
             HostWriteStatus(0);
         elsif command == 25 then
             HostWriteValue(ActiveBlockIsCollective());
+        elsif command == 26 then
+            SnapshotCoreBlockControl();
+            HostWriteStatus(0);
+        elsif command == 27 then
+            RestoreCoreBlockControl();
+            HostWriteStatus(0);
         else
             HostWriteStatus(2);
         end;

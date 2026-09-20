@@ -493,6 +493,24 @@ class EmbeddedAslWorker:
 
         return self._peek_flag("peek_block_collective")
 
+    def snapshot_core_block_state(self) -> None:
+        """Take the core-scope block state an instruction starts from."""
+
+        response = self.request("snapshot_core_block_state")
+        if response != "status 0":
+            raise EmbeddedWorkerError(
+                f"unexpected snapshot_core_block_state response: {response}"
+            )
+
+    def restore_core_block_state(self) -> None:
+        """Restore the core-scope block state for one more PE application."""
+
+        response = self.request("restore_core_block_state")
+        if response != "status 0":
+            raise EmbeddedWorkerError(
+                f"unexpected restore_core_block_state response: {response}"
+            )
+
     def peek_acr(self) -> int:
         """Read the ASL-owned current access-control ring."""
 

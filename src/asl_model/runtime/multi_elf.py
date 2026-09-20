@@ -323,6 +323,9 @@ class AslWorkerExecutor:
             )
         self.worker_scope = worker_scope
         self.experimental_core = experimental_core
+        # spmd: the PC of the instruction whose core block state is held in the
+        # worker snapshot, so a second PE application can restore it.
+        self._spmd_snapshot_pc: int | None = None
         if parallel_pe_steps and worker_scope != "per-pe":
             raise UnsupportedPeStateScope(
                 "parallel PE steps require worker_scope='per-pe'"
@@ -574,6 +577,8 @@ class AslWorkerExecutor:
                         "single-worker executor requires select_pe and set_tpc on its worker"
                     )
                 select_pe(context.pe_id)
+                if self.worker_scope == "spmd":
+                    self._spmd_prepare_block_state(worker, request.pc, context)
                 set_tpc(request.pc)
             status = worker.step(
                 int.from_bytes(request.encoding, "little"), len(request.encoding) * 8
@@ -613,6 +618,8 @@ class AslWorkerExecutor:
             self._synchronize_worker_memory(context.pe_id, worker)
             if self.worker_scope in {"single", "core", "spmd"}:
                 worker.select_pe(context.pe_id)
+                if self.worker_scope == "spmd":
+                    self._spmd_prepare_block_state(worker, context.pc, context)
                 worker.set_tpc(context.pc)
             step = worker.step_auto()
             if self.worker_scope == "spmd":
@@ -685,6 +692,29 @@ class AslWorkerExecutor:
                 "participating PE set and is not scheduled yet; it must be "
                 "applied once after the arriving PEs have converged"
             )
+
+    def _spmd_prepare_block_state(self, worker, pc: int, context: PeContext) -> None:
+        """Give every PE the same core block state before it applies an instruction.
+
+        The core-scope block and transfer state belongs to the instruction
+        stream and is consumed once.  Applying one instruction for each PE
+        therefore has to start from the same snapshot every time, otherwise the
+        second PE sees a predecessor the first application already moved past
+        and the transfer is rejected.
+        """
+
+        snapshot = getattr(worker, "snapshot_core_block_state", None)
+        restore = getattr(worker, "restore_core_block_state", None)
+        if snapshot is None or restore is None:
+            raise UnsupportedPeStateScope(
+                "spmd worker scope requires the core block state snapshot "
+                "commands on its worker"
+            )
+        if self._spmd_snapshot_pc == pc:
+            restore()
+            return
+        snapshot()
+        self._spmd_snapshot_pc = pc
 
     def close(self) -> None:
         self.rollback_parallel_round()
@@ -766,6 +796,9 @@ class AslMultiPeElfRunner:
         self.worker_scope = worker_scope
         self.experimental_core = experimental_core
         self.allow_unmodelled_multi_pe = allow_unmodelled_multi_pe
+        # spmd: the program counter of the instruction whose core-scope block
+        # state is currently held in the worker snapshot.
+        self._spmd_snapshot_pc: int | None = None
         if parallel_pe_steps and worker_scope != "per-pe":
             raise UnsupportedPeStateScope(
                 "parallel PE steps require worker_scope='per-pe'"

@@ -124,6 +124,12 @@ class SpmdFakeWorker(ScopedFakeWorker):
     def peek_block_collective(self):
         return self.collective
 
+    def snapshot_core_block_state(self):
+        self.calls.append(("snapshot_core_block_state",))
+
+    def restore_core_block_state(self):
+        self.calls.append(("restore_core_block_state",))
+
 
 class TimingOutAutoWorker(ScopedFakeWorker):
     def step_auto(self):
@@ -437,8 +443,33 @@ class MultiPeElfRunnerTest(unittest.TestCase):
         # The startup selects PE0 once; each step then selects its own PE.
         self.assertEqual(worker.selected[-2:], [0, 1])
         self.assertEqual(worker.tpcs, [0x1000, 0x2000])
+        kinds = [call[0] for call in worker.calls]
+        # These are two different instructions, so each takes its own snapshot
+        # and neither needs a restore.
+        self.assertEqual(kinds.count("snapshot_core_block_state"), 2)
+        self.assertNotIn("restore_core_block_state", kinds)
         self.assertEqual(first[1].status, "committed")
         self.assertEqual(second[1].status, "committed")
+
+    def test_spmd_scope_restores_the_snapshot_for_a_second_pe(self):
+        worker = SpmdFakeWorker()
+        executor = AslWorkerExecutor(
+            "/unused",
+            worker_scope="spmd",
+            worker_factory=lambda *_args, **_kwargs: worker,
+        )
+        # Both PEs apply the same instruction, which is the common SPMD case.
+        contexts = (PeContext(0, 0, 0x1000), PeContext(1, 1, 0x1000))
+        executor.start(self.image, contexts)
+        try:
+            executor.step_next(contexts[0])
+            executor.step_next(contexts[1])
+        finally:
+            executor.close()
+
+        kinds = [call[0] for call in worker.calls]
+        self.assertEqual(kinds.count("snapshot_core_block_state"), 1)
+        self.assertEqual(kinds.count("restore_core_block_state"), 1)
 
     def test_spmd_scope_stops_at_a_collective_block(self):
         worker = SpmdFakeWorker()
