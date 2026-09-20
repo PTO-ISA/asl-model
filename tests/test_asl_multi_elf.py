@@ -10,7 +10,7 @@ from asl_model.runtime.multi_elf import (
     PeContext,
     UnsupportedPeStateScope,
 )
-from asl_model.embedded import EmbeddedWorkerTimeout
+from asl_model.embedded import AutoStepResult, EmbeddedWorkerTimeout
 from asl_model.runtime.protocol import ProgramImage, ProgramSegment
 from asl_model.runtime.protocol import InstructionRequest
 from asl_model.runtime.profile import AslModelProfile
@@ -93,6 +93,36 @@ class CoreScopedFakeWorker(ScopedFakeWorker):
 class FailingAutoWorker(ScopedFakeWorker):
     def step_auto(self):
         raise RuntimeError("synthetic host failure")
+
+
+class SpmdFakeWorker(ScopedFakeWorker):
+    """One interpreter shared by the PEs, as the single-stream model requires."""
+
+    def __init__(self, *_args, **_kwargs):
+        super().__init__(*_args, **_kwargs)
+        self.collective = False
+        self.selected: list[int] = []
+        self.tpcs: list[int] = []
+
+    def select_pe(self, pe_id):
+        super().select_pe(pe_id)
+        self.selected.append(pe_id)
+
+    def set_tpc(self, value):
+        super().set_tpc(value)
+        self.tpcs.append(value)
+
+    def step_auto(self):
+        self.calls.append(("step_auto",))
+        return AutoStepResult(
+            status=0, length_bits=32, fault_code=0, tpc=0x1004, instruction=0x1
+        )
+
+    def peek_terminal_pending(self):
+        return False
+
+    def peek_block_collective(self):
+        return self.collective
 
 
 class TimingOutAutoWorker(ScopedFakeWorker):
@@ -384,6 +414,51 @@ class MultiPeElfRunnerTest(unittest.TestCase):
             self.assertEqual(first.next_pc, second.next_pc)
         finally:
             executor.close()
+
+    def test_spmd_scope_applies_each_instruction_per_pe(self):
+        worker = SpmdFakeWorker()
+        executor = AslWorkerExecutor(
+            "/unused",
+            worker_scope="spmd",
+            worker_factory=lambda *_args, **_kwargs: worker,
+        )
+        contexts = (PeContext(0, 0, 0x1000), PeContext(1, 1, 0x2000))
+        executor.start(self.image, contexts)
+        distinct_workers = {id(entry) for entry in executor.workers.values()}
+        try:
+            first = executor.step_next(contexts[0])
+            second = executor.step_next(contexts[1])
+        finally:
+            executor.close()
+
+        # One interpreter, and each PE is selected with its own PC so the
+        # instruction is applied for that PE.
+        self.assertEqual(len(distinct_workers), 1)
+        # The startup selects PE0 once; each step then selects its own PE.
+        self.assertEqual(worker.selected[-2:], [0, 1])
+        self.assertEqual(worker.tpcs, [0x1000, 0x2000])
+        self.assertEqual(first[1].status, "committed")
+        self.assertEqual(second[1].status, "committed")
+
+    def test_spmd_scope_stops_at_a_collective_block(self):
+        worker = SpmdFakeWorker()
+        worker.collective = True
+        executor = AslWorkerExecutor(
+            "/unused",
+            worker_scope="spmd",
+            worker_factory=lambda *_args, **_kwargs: worker,
+        )
+        contexts = (PeContext(0, 0, 0x1000),)
+        executor.start(self.image, contexts)
+        try:
+            _request, execution = executor.step_next(contexts[0])
+        finally:
+            executor.close()
+
+        # A Tile-class block must be applied once for the arriving set, so the
+        # per-PE path refuses instead of applying it once per PE.
+        self.assertFalse(execution.ok)
+        self.assertIn("takes effect for the participating PE set", execution.error)
 
     def test_core_scope_requires_explicit_experimental_opt_in(self):
         with self.assertRaisesRegex(UnsupportedPeStateScope, "experimental"):

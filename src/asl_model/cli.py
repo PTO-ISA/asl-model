@@ -67,9 +67,10 @@ def main() -> int:
     parser.add_argument("--pe-count", type=int, default=1, help="logical PE/thread contexts for elf-run")
     parser.add_argument(
         "--worker-scope",
-        choices=("per-pe", "core", "single"),
+        choices=("per-pe", "spmd", "core", "single"),
         default="per-pe",
-        help=("ASL worker scope: per-pe starts one VM per PE; core is an "
+        help=("ASL worker scope: spmd uses one VM for the core and applies each "
+              "instruction for its PE; per-pe starts one VM per PE; core is an "
               "explicit incomplete diagnostic experiment; single is a "
               "one-context capability probe"),
     )
