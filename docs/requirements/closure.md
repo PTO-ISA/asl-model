@@ -65,6 +65,32 @@ observe the independently specified U32 result.
 AVS case `tile_tadd_stop_pc` MUST satisfy the Tile load/add/store and terminal
 TPC obligation.
 
+## Ordered TEXPDIF execution {#ASLMODEL-REQ-TILE-TEXPDIF-ORDER-001}
+<!-- ndf: kind=requirement modality=must refinement=L1 domain=tile status=active conforms-to=ndf://pto-spec/PTO-INST-TILE-TEXPDIF,ndf://pto-spec/PTO-INST-TILE-TLOAD,ndf://pto-spec/PTO-INST-TILE-TSTORE -->
+
+The closure MUST compile, link, and execute the committed FP32 TLOAD,
+TEXPDIF, and TSTORE sequence, then compare its ordered zero and infinity
+results with independently calculated and committed golden bytes.
+
+## Ordered TEXPDIF verification {#ASLMODEL-VERIF-TILE-TEXPDIF-ORDER-001}
+<!-- ndf: kind=verification modality=must refinement=L3 domain=tile status=active verifies=ASLMODEL-REQ-TILE-TEXPDIF-ORDER-001 -->
+
+AVS case `tile_texpdif_order` MUST satisfy the TEXPDIF selector, ordered-source,
+special-value, load/store, and independent-result obligation.
+
+## TIMG2COL feature-map execution {#ASLMODEL-REQ-BSTART-TIMG2COL-001}
+<!-- ndf: kind=requirement modality=must refinement=L1 domain=tile status=active conforms-to=ndf://pto-spec/PTO-INST-BLOCK-BSTART-TIMG2COL -->
+
+The closure MUST compile, link, and execute the committed one-row U8
+TIMG2COL feature-map sequence, store the published singleton Shared result,
+and compare all 32 bytes with independently committed golden bytes.
+
+## TIMG2COL feature-map verification {#ASLMODEL-VERIF-BSTART-TIMG2COL-001}
+<!-- ndf: kind=verification modality=must refinement=L3 domain=tile status=active verifies=ASLMODEL-REQ-BSTART-TIMG2COL-001 -->
+
+AVS case `bstart_timg2col_feature_map` MUST satisfy the TIMG2COL feature-map,
+singleton Shared publication, store, and independent-result obligation.
+
 ## Direct CUBE reduction and expansion layouts {#ASLMODEL-REQ-CUBE-REDUCE-EXPAND-001}
 <!-- ndf: kind=requirement modality=must refinement=L1 domain=tile status=active conforms-to=ndf://pto-spec/PTO-TEXPANDS-CONTRACT-001,ndf://pto-spec/PTO-TROWEXPANDADD-CONTRACT-001,ndf://pto-spec/PTO-TROWSUM-CONTRACT-001 -->
 

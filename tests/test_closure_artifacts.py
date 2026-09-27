@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
+import re
 import struct
 import tempfile
 import unittest
@@ -459,6 +460,50 @@ class ClosureArtifactTests(unittest.TestCase):
         generated["golden"]["provenance"]["model_generated"] = True  # type: ignore[index]
         with self.assertRaisesRegex(ValueError, "model_generated=false"):
             validate_case(generated)
+
+    def test_case_obligations_resolve_to_ndf_verifications(self) -> None:
+        root = pathlib.Path(__file__).parents[1]
+        cases = _load_cases(root / "avs" / "cases")
+        source = (root / "docs" / "requirements" / "closure.md").read_text(
+            encoding="utf-8"
+        )
+        nodes: dict[str, dict[str, str]] = {}
+        for match in re.finditer(
+            r"^## .+ \{#(?P<id>ASLMODEL-[^}]+)\}\n"
+            r"<!-- ndf: (?P<metadata>[^>]+) -->$",
+            source,
+            re.MULTILINE,
+        ):
+            metadata = dict(
+                field.split("=", 1)
+                for field in match.group("metadata").split()
+            )
+            nodes[match.group("id")] = metadata
+
+        for case_id, (_path, case) in cases.items():
+            for obligation_id in case["obligation_ids"]:
+                with self.subTest(case_id=case_id, obligation_id=obligation_id):
+                    verification = nodes.get(obligation_id)
+                    self.assertIsNotNone(verification)
+                    assert verification is not None
+                    self.assertEqual(verification["kind"], "verification")
+                    requirement_id = verification.get("verifies")
+                    self.assertIsInstance(requirement_id, str)
+                    assert requirement_id is not None
+                    requirement = nodes.get(requirement_id)
+                    self.assertIsNotNone(requirement)
+                    assert requirement is not None
+                    self.assertEqual(requirement["kind"], "requirement")
+
+        texpdif_requirement = nodes["ASLMODEL-REQ-TILE-TEXPDIF-ORDER-001"]
+        self.assertEqual(
+            texpdif_requirement["conforms-to"].split(","),
+            [
+                "ndf://pto-spec/PTO-INST-TILE-TEXPDIF",
+                "ndf://pto-spec/PTO-INST-TILE-TLOAD",
+                "ndf://pto-spec/PTO-INST-TILE-TSTORE",
+            ],
+        )
 
     def test_real_ndf_impact_output_selects_changed_instruction_ids(self) -> None:
         document = {
