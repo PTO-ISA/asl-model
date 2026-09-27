@@ -1,8 +1,8 @@
 {
   "schema": "pto-asl-model-lock-v1",
   "pto_repository": "https://github.com/PTO-ISA/pto-spec.git",
-  "pto_ref": "7186d613092848b83199fad746fbe325e2fbf56c",
-  "pto_commit": "7186d613092848b83199fad746fbe325e2fbf56c",
+  "pto_ref": "887ef12d089197db3ea1f68c33e075ce5e4039db",
+  "pto_commit": "887ef12d089197db3ea1f68c33e075ce5e4039db",
   "pto_tree": "51ce606ed5774380ddac89ff79d9825de7c58c19",
   "aslref_repository": "https://github.com/PTO-ISA/herdtools7.git",
   "aslref_commit": "5873cbb69312d92b4b97131cff840ec621b12ddf",
