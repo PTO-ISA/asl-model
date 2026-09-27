@@ -386,7 +386,31 @@ class ClosureArtifactTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn(".byte 0x81,0x11,0xc1,0xd9", source)
         self.assertIn("B.IOS mask=1000, ->S8<128B>", source)
-        self.assertIn("B.IOS S8, mask=1000", source)
+        tstore = source.split("BSTART.TSTORE U8", 1)[1].split(
+            "C.BSTOP", 1
+        )[0]
+        self.assertEqual(
+            [
+                line.strip()
+                for line in tstore.splitlines()
+                if line.strip().startswith("C.B.DIMI")
+            ],
+            [
+                "C.B.DIMI 32, ->lb0",
+                "C.B.DIMI 1, ->lb1",
+                "C.B.DIMI 32, ->lb2",
+            ],
+        )
+        self.assertIn("B.IOS S8, mask=1000", tstore)
+        timg2col_case = cases["bstart_timg2col_feature_map"][1]
+        self.assertEqual(timg2col_case["execution"]["max_steps"], 20)
+        self.assertEqual(
+            timg2col_case["expected_length_sequence"],
+            [
+                32, 32, 32, 32, 32, 32, 16, 16, 16, 32,
+                32, 32, 16, 32, 16, 16, 16, 32, 32, 16,
+            ],
+        )
         selected, obligations = _select_cases(
             cases,
             [

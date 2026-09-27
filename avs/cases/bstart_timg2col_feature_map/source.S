@@ -25,6 +25,9 @@ _start:
   # Store the published singleton Shared ND result and compare the exact
   # 32-byte logical row with the independent golden vector.
   BSTART.TSTORE U8
+  C.B.DIMI 32, ->lb0
+  C.B.DIMI 1, ->lb1
+  C.B.DIMI 32, ->lb2
   B.IOS S8, mask=1000
   B.IOR [sp, zero, zero], ->zero
   C.BSTOP
