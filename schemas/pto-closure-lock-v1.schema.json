@@ -34,6 +34,6 @@
     "nonemptyStrings": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
     "repositoryIdentity": {"type": "object", "additionalProperties": false, "required": ["repository", "commit", "tree"], "properties": {"repository": {"type": "string", "pattern": "^https://github\\.com/.+\\.git$"}, "commit": {"$ref": "#/$defs/git"}, "tree": {"$ref": "#/$defs/git"}}},
     "tool": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}},
-    "identity": {"type": "object", "additionalProperties": false, "required": ["release", "publication_version", "encoding_abi", "encoding_projection_sha256"], "properties": {"release": {"const": "0.58.6"}, "publication_version": {"const": "0.58.6.0"}, "encoding_abi": {"const": "pto-isa-0.58.6-mode-function-v1"}, "encoding_projection_sha256": {"const": "a757f2e50ec8050d2131b6b9ad38657511df80cf3f9424d5f009ea6e0cc35839"}}}
+    "identity": {"type": "object", "additionalProperties": false, "required": ["release", "publication_version", "encoding_abi", "encoding_projection_sha256"], "properties": {"release": {"const": "0.58.7"}, "publication_version": {"const": "0.58.7.0"}, "encoding_abi": {"const": "pto-isa-0.58.7-mode-function-v1"}, "encoding_projection_sha256": {"const": "9c49cdfa79a4eda6b27c1548bfd06ef681b6189f7d02d466ddfd43f59993b93d"}}}
   }
 }

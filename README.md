@@ -100,15 +100,15 @@ time to the unchanged 325-step `Fault_TileLegality` signature from 393.41 to
 This is performance evidence for a known failing prefix, not an FA numerical
 correctness or completion result.
 
-## PTO 0.58.6 compiler/model closure
+## PTO 0.58.7 compiler/model closure
 
-The repository owns the cross-component AVS layer for PTO 0.58.6. The
+The repository owns the cross-component AVS layer for PTO 0.58.7. The
 [`scripts/pto-closure`](scripts/pto-closure) entrypoint validates an exact,
 clean PTO-SPEC/LLVM/ASL-MODEL candidate tuple, the PTO-owned NDF and ASLRef
 pins, and exact tool binaries before it compiles any case. Every input object
 and final ELF must contain exactly one canonical allocatable
-`.note.pto.isa` for release `0.58.6`, publication `0.58.6.0`, encoding ABI
-`pto-isa-0.58.6-mode-function-v1`, and the release encoding-projection hash.
+`.note.pto.isa` for release `0.58.7`, publication `0.58.7.0`, encoding ABI
+`pto-isa-0.58.7-mode-function-v1`, and the release encoding-projection hash.
 
 Closed-loop cases live under [`avs/cases`](avs/cases). They use JSON syntax in
 `case.yaml`, a deterministic YAML 1.2 subset requiring no runtime YAML parser.
@@ -124,6 +124,8 @@ instruction-length sequences remain explicit here. C and IR scalar-return
 canaries separately exercise compiler-language lanes. The corpus also
 adds `cube_reduce_expand_layouts` for direct M16/M32 reduction and expansion
 and `cube_internal_acc_hints` for transparent CCTRL cache hints.
+`tile_texpdif_order` exercises the 0.58.7 TEXPDIF selector and ordered
+`exp(src0-src1)` semantics with an independently calculated FP32 golden.
 
 The command emits four distinct canonical artifacts:
 
