@@ -14,10 +14,10 @@ commits and local checkout paths:
 {
   "schema": "pto-closure-request-v1",
   "identity": {
-    "release": "0.58.6",
-    "publication_version": "0.58.6.0",
-    "encoding_abi": "pto-isa-0.58.6-mode-function-v1",
-    "encoding_projection_sha256": "a757f2e50ec8050d2131b6b9ad38657511df80cf3f9424d5f009ea6e0cc35839"
+    "release": "0.58.7",
+    "publication_version": "0.58.7.0",
+    "encoding_abi": "pto-isa-0.58.7-mode-function-v1",
+    "encoding_projection_sha256": "9c49cdfa79a4eda6b27c1548bfd06ef681b6189f7d02d466ddfd43f59993b93d"
   },
   "repositories": {
     "pto_spec": {"repository": "https://github.com/PTO-ISA/pto-spec.git", "commit": "<40 hex>", "path": "/checkout/pto-spec"},
@@ -26,7 +26,7 @@ commits and local checkout paths:
   },
   "policy": {
     "affected_pto_ids": ["PTO-INST-TILE-TADD"],
-    "mandatory_case_ids": ["block_64_stop_pc", "cube_internal_acc_hints", "cube_reduce_expand_layouts", "host_exit_group", "scalar-c-return", "scalar-ir-return", "scalar_stop_pc", "tile_tadd_stop_pc"]
+    "mandatory_case_ids": ["block_64_stop_pc", "cube_internal_acc_hints", "cube_reduce_expand_layouts", "host_exit_group", "scalar-c-return", "scalar-ir-return", "scalar_stop_pc", "tile_tadd_stop_pc", "tile_texpdif_order"]
   }
 }
 ```

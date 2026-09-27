@@ -15,11 +15,11 @@ SEMANTIC_PAYLOAD_SCHEMA = "pto-closure-semantic-payload-v1"
 RUN_ENVELOPE_SCHEMA = "pto-closure-run-envelope-v1"
 CASE_SCHEMA = "pto-avs-case-v1"
 
-RELEASE = "0.58.6"
-PUBLICATION_VERSION = "0.58.6.0"
-ENCODING_ABI = "pto-isa-0.58.6-mode-function-v1"
+RELEASE = "0.58.7"
+PUBLICATION_VERSION = "0.58.7.0"
+ENCODING_ABI = "pto-isa-0.58.7-mode-function-v1"
 ENCODING_PROJECTION_SHA256 = (
-    "a757f2e50ec8050d2131b6b9ad38657511df80cf3f9424d5f009ea6e0cc35839"
+    "9c49cdfa79a4eda6b27c1548bfd06ef681b6189f7d02d466ddfd43f59993b93d"
 )
 NDF_COMMIT = "ed356980ce7ecb2e8482902988d5012fb54058b3"
 ASLREF_COMMIT = "5873cbb69312d92b4b97131cff840ec621b12ddf"
